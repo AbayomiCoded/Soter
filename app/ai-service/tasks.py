@@ -12,6 +12,7 @@ from celery.result import AsyncResult
 import httpx
 
 import metrics
+import tracing
 from config import settings
 from services.load_shedder import ensure_queue_capacity
 from services.pii_scrubber import PIIScrubberService
@@ -75,6 +76,8 @@ def get_process_heavy_inference_task():
         default_retry_delay=settings.task_retry_delay_seconds,
     )
     def process_heavy_inference_task(self, task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        correlation_id = payload.get('correlation_id') or payload.get('trace_id') or tracing.get_correlation_id()
+        token = tracing.bind_correlation_id(correlation_id)
         try:
             return process_heavy_inference_impl(self, task_id, payload)
         except Exception as exc:
@@ -88,13 +91,15 @@ def get_process_heavy_inference_task():
                     retry_delay,
                     exc,
                 )
-                update_task_status(task_id, 'retrying', error=str(exc))
+                update_task_status(task_id, 'retrying', error=str(exc), correlation_id=correlation_id)
                 raise self.retry(exc=exc, countdown=retry_delay)
 
             error_msg = str(exc)
-            update_task_status(task_id, 'failed', error=error_msg)
-            send_webhook_notification(task_id, 'failed', error=error_msg)
+            update_task_status(task_id, 'failed', error=error_msg, correlation_id=correlation_id)
+            send_webhook_notification(task_id, 'failed', error=error_msg, correlation_id=correlation_id)
             raise
+        finally:
+            tracing.reset_correlation_id(token)
     
     return process_heavy_inference_task
 
@@ -108,66 +113,81 @@ def update_task_status(
     task_id: str,
     status: str,
     result: Optional[Any] = None,
-    error: Optional[str] = None
+    error: Optional[str] = None,
+    correlation_id: Optional[str] = None,
 ) -> None:
     """
     Update the status of a background task
-    
+
     Args:
         task_id: Unique identifier for the task
         status: Current status (pending, processing, completed, failed)
         result: Task result data (if completed)
         error: Error message (if failed)
+        correlation_id: Request trace ID propagated from the originating request
     """
     task_results[task_id] = {
         'status': status,
         'result': result,
         'error': error,
+        'correlation_id': correlation_id or tracing.get_correlation_id(),
         'updated_at': time.time()
     }
 
 
-def send_webhook_notification(task_id: str, status: str, result: Any = None, error: str = None) -> None:
+def send_webhook_notification(task_id: str, status: str, result: Any = None, error: str = None, correlation_id: Optional[str] = None) -> None:
     """
     Send webhook notification to NestJS backend when task completes
-    
+
     Args:
         task_id: Unique identifier for the task
         status: Final status (completed, failed)
         result: Task result data (if completed)
         error: Error message (if failed)
+        correlation_id: The originating request correlation ID
     """
     if not settings.backend_webhook_url:
         logger.warning("Backend webhook URL not configured, skipping notification")
         return
-    
+
+    resolved_trace_id = correlation_id or tracing.get_correlation_id() or ""
     payload = {
         'task_id': task_id,
         'status': status,
         'service': 'soter-ai-service',
         'timestamp': time.time(),
+        'correlation_id': resolved_trace_id,
+        'trace_id': resolved_trace_id,
     }
-    
+
     if result is not None:
         payload['result'] = result
-    
+
     if error:
         payload['error'] = error
-    
+
     try:
         # Fire and forget - don't block the task completion
         import threading
         def send_notification():
+            token = tracing.bind_correlation_id(resolved_trace_id)
             try:
+                headers = {
+                    "X-Correlation-Id": resolved_trace_id,
+                    "X-Request-Id": resolved_trace_id,
+                    "trace_id": resolved_trace_id,
+                }
                 with httpx.Client(timeout=10.0) as client:
-                    response = client.post(settings.backend_webhook_url, json=payload)
+                    response = client.post(settings.backend_webhook_url, json=payload, headers=headers)
                     if response.status_code >= 400:
                         logger.error(f"Webhook notification failed: {response.status_code} - {response.text}")
                     else:
                         logger.info(f"Webhook notification sent for task {task_id}")
             except Exception as e:
                 logger.error(f"Failed to send webhook notification: {e}")
-        
+            finally:
+                tracing.reset_correlation_id(token)
+
         thread = threading.Thread(target=send_notification)
         thread.start()
     except Exception as e:
@@ -177,31 +197,33 @@ def send_webhook_notification(task_id: str, status: str, result: Any = None, err
 def process_heavy_inference_impl(self, task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     """
     Process heavy AI inference tasks in background
-    
+
     Args:
         task_id: Unique identifier for tracking
         payload: Task payload containing input data
-    
+
     Returns:
         dict: Processing results
     """
-    logger.info(f"Starting heavy inference task {task_id}")
-    
+    correlation_id = payload.get('correlation_id') or payload.get('trace_id') or tracing.get_correlation_id()
+    token = tracing.bind_correlation_id(correlation_id)
+    logger.info(f"Starting heavy inference task {task_id} [{correlation_id}]" if correlation_id else f"Starting heavy inference task {task_id}")
+
     try:
         # Update status to processing
-        update_task_status(task_id, 'processing')
-        
+        update_task_status(task_id, 'processing', correlation_id=correlation_id)
+
         # Extract task type from payload
         task_type = payload.get('type', 'inference')
-        
+
         start_inference = time.time()
-        
+
         # Simulate heavy processing (replace with actual AI inference logic)
         # In production, this would handle:
         # - Large image processing
         # - Complex model inference
         # - Batch processing
-        
+
         if task_type == 'ocr':
             result = _process_ocr(payload)
         elif task_type == 'image_analysis':
@@ -214,22 +236,24 @@ def process_heavy_inference_impl(self, task_id: str, payload: Dict[str, Any]) ->
             result = _process_batch(payload)
         else:
             result = _process_default_inference(payload)
-        
+
         # Update status to completed
-        update_task_status(task_id, 'completed', result)
-        
+        update_task_status(task_id, 'completed', result, correlation_id=correlation_id)
+
         # Send webhook notification to backend
-        send_webhook_notification(task_id, 'completed', result)
-        
+        send_webhook_notification(task_id, 'completed', result, correlation_id=correlation_id)
+
         inference_latency = time.time() - start_inference
         metrics.INFERENCE_LATENCY.labels(task_type=task_type).observe(inference_latency)
-        
+
         logger.info(f"Task {task_id} completed successfully in {inference_latency:.4f}s")
         return result
-        
+
     except Exception as e:
         logger.error(f"Task {task_id} failed: {str(e)}", exc_info=True)
         raise
+    finally:
+        tracing.reset_correlation_id(token)
 
 
 def _process_ocr(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -442,33 +466,35 @@ def get_task_status(task_id: str) -> Dict[str, Any]:
 def create_task(task_type: str, payload: Dict[str, Any]) -> str:
     """
     Create a new background task
-    
+
     Args:
         task_type: Type of task to create
         payload: Task payload
-    
+
     Returns:
         str: Task ID
     """
     task_id = str(uuid.uuid4())
-    
+    correlation_id = payload.get('correlation_id') or payload.get('trace_id') or tracing.get_correlation_id()
+    task_payload = {**payload, 'type': task_type, 'correlation_id': correlation_id, 'trace_id': correlation_id}
+
     # Initialize task status
-    update_task_status(task_id, 'pending')
-    
+    update_task_status(task_id, 'pending', correlation_id=correlation_id)
+
     ensure_queue_capacity()
-    
+
     try:
         # Queue the task using the lazy-registered task
         task = get_process_heavy_inference_task()
         task.apply_async(
-            args=[task_id, {**payload, 'type': task_type}],
-            task_id=task_id
+            args=[task_id, task_payload],
+            task_id=task_id,
         )
     except Exception as e:
         logger.error(f"Failed to queue task {task_id}: {e}. Redis may not be available.")
-        update_task_status(task_id, 'failed', error=str(e))
+        update_task_status(task_id, 'failed', error=str(e), correlation_id=correlation_id)
         raise
-    
-    logger.info(f"Created task {task_id} of type {task_type}")
-    
+
+    logger.info(f"Created task {task_id} of type {task_type} [correlation_id={correlation_id}]" if correlation_id else f"Created task {task_id} of type {task_type}")
+
     return task_id

@@ -9,8 +9,11 @@ from pydantic import BaseModel, Field
 from typing import Any, Dict, List, Optional
 import logging
 import uuid
-from contextvars import ContextVar
 from pythonjsonlogger import jsonlogger
+
+import tracing
+
+correlation_id_var = tracing.correlation_id_var
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Response
 from fastapi.exceptions import RequestValidationError
@@ -42,13 +45,9 @@ from schemas.humanitarian import (
 )
 from services.humanitarian_verification import HumanitarianVerificationService
 
-# Context variable for correlation ID
-correlation_id_var: ContextVar[str] = ContextVar("correlation_id", default="")
-
-
 class CorrelationIdFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
-        record.correlationId = correlation_id_var.get()
+        record.correlationId = tracing.get_correlation_id()
         return True
 
 
@@ -223,23 +222,23 @@ async def legacy_redirect_middleware(request: Request, call_next):
 @app.middleware("http")
 async def correlation_id_middleware(request: Request, call_next):
     correlation_id = request.headers.get("x-correlation-id") or request.headers.get("x-request-id") or str(uuid.uuid4())
-    
+
     # Attach correlation ID to request state
     request.state.correlation_id = correlation_id
-    
-    # Set context variable for logging
-    correlation_id_token = correlation_id_var.set(correlation_id)
-    
+
+    # Set context variable for logging and task propagation
+    correlation_id_token = tracing.bind_correlation_id(correlation_id)
+
     try:
         response = await call_next(request)
     finally:
-        correlation_id_var.reset(correlation_id_token)
-    
+        tracing.reset_correlation_id(correlation_id_token)
+
     # Set correlation ID headers in response
     response.headers["x-correlation-id"] = correlation_id
     response.headers["x-request-id"] = correlation_id
     response.headers["trace_id"] = correlation_id
-    
+
     return response
 
 
