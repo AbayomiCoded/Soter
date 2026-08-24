@@ -20,6 +20,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from exceptions import AIServiceError, LoadShedError
 from schemas.errors import ErrorDetail, ErrorEnvelope
 import time
+import asyncio
 import metrics
 import re
 
@@ -111,6 +112,16 @@ _LEGACY_PREFIX_MAP: list = [
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting up Soter AI Service...")
+
+    # Fail fast on invalid configuration: raising inside the lifespan
+    # prevents uvicorn from ever serving traffic. All offending keys are
+    # reported together by validate_configuration().
+    settings.validate_configuration()
+
+    # Report optional values still at their defaults (DEBUG only; secrets
+    # are never included, consistent with logging_redaction.py).
+    settings.report_boot_configuration(logger)
+
     if not settings.validate_api_keys():
         logger.warning("No API keys configured. AI features will be unavailable.")
     else:
@@ -135,10 +146,23 @@ async def lifespan(app: FastAPI):
     # same keys via TestClient.app.state.
     app.state.artifact_access_control = evidence_access_control
     app.state.humanitarian_verification_service = humanitarian_verification_service
-    app.state.rate_limiter = rate_limiter
+    app.state.is_shutting_down = False
+    app.state.active_requests = 0
 
     yield
     logger.info("Shutting down Soter AI Service...")
+    app.state.is_shutting_down = True
+
+    drain_timeout = settings.drain_timeout_seconds
+    start_time = time.time()
+
+    while app.state.active_requests > 0 and (time.time() - start_time) < drain_timeout:
+        await asyncio.sleep(0.1)
+
+    if app.state.active_requests > 0:
+        logger.warning(
+            f"Drain timeout ({drain_timeout}s) reached with {app.state.active_requests} active requests."
+        )
 
 
 app = FastAPI(
@@ -419,11 +443,15 @@ async def monitor_requests(request: Request, call_next):
     if path in _NEVER_THROTTLE or is_redirect_path:
         return await call_next(request)
 
-    from services.rate_limiter import evaluate_rate_limit
-
-    rate_limit_response = evaluate_rate_limit(request)
-    if rate_limit_response is not None:
-        return rate_limit_response
+    if getattr(request.app.state, "is_shutting_down", False):
+        return JSONResponse(
+            status_code=503,
+            content=ErrorEnvelope(
+                error=ErrorDetail(
+                    code="SERVICE_UNAVAILABLE", message="Service is shutting down"
+                )
+            ).model_dump(),
+        )
 
     from services.load_shedder import evaluate_load_shed
 
@@ -431,21 +459,36 @@ async def monitor_requests(request: Request, call_next):
     if shed_response is not None:
         return shed_response
 
+    if hasattr(request.app.state, "active_requests"):
+        request.app.state.active_requests += 1
+
     start_time = time.time()
     try:
         response = await call_next(request)
         status_code = response.status_code
+    except asyncio.CancelledError as e:
+        status_code = 499
+        logger.warning(f"Request {path} cancelled during shutdown. Dead-lettering.")
+        from services.dead_letter import dead_letter_queue
 
-        # Attach rate limit metadata headers if present
-        rl_res = getattr(request.state, "rate_limit_result", None)
-        if rl_res is not None:
-            response.headers["X-RateLimit-Limit"] = str(rl_res.limit)
-            response.headers["X-RateLimit-Remaining"] = str(rl_res.remaining)
-            response.headers["X-RateLimit-Reset"] = str(rl_res.reset_seconds)
+        dead_letter_queue.add(
+            kind="async_job",
+            task_id=(
+                request.state.correlation_id
+                if hasattr(request.state, "correlation_id")
+                else str(uuid.uuid4())
+            ),
+            payload={"path": path, "method": request.method},
+            error="Request cancelled during graceful shutdown",
+            task_type="sync_request",
+        )
+        raise e
     except Exception as e:
         status_code = 500
         raise e
     finally:
+        if hasattr(request.app.state, "active_requests"):
+            request.app.state.active_requests -= 1
         latency = time.time() - start_time
         metrics.REQUEST_COUNT.labels(
             method=request.method,
@@ -483,7 +526,16 @@ async def get_metrics():
 
 
 @app.get("/health")
-async def health_check():
+async def health_check(request: Request):
+    if getattr(request.app.state, "is_shutting_down", False):
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "draining",
+                "service": "soter-ai-service",
+                "version": "1.0.0",
+            },
+        )
     return {"status": "healthy", "service": "soter-ai-service", "version": "1.0.0"}
 
 

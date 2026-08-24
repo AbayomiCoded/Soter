@@ -6,10 +6,12 @@ Provides response caching for safe read operations with configurable TTL.
 import json
 import hashlib
 import logging
+import asyncio
 from typing import Optional, Any, Callable, Dict, List
 from functools import wraps
 import redis
 from config import Settings
+import metrics
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +63,7 @@ class CacheService:
             tags: Optional named values (e.g. artifact_id, model_version) to embed
                 literally in the key, in addition to the arguments hash, so that
                 CacheInvalidationHelper can target entries by that value via a
-                Redis glob pattern rather than needing to know the full hash.
+                Redis glob pattern rather than needing the full argument hash.
             **kwargs: Keyword arguments
 
         Returns:
@@ -198,11 +200,35 @@ class CacheService:
             return 0
 
 
+# Module-level dictionary to track in-flight computations for single-flight suppression
+_inflight_computations: Dict[str, asyncio.Event] = {}
+_inflight_results: Dict[str, Any] = {}
+_inflight_errors: Dict[str, Exception] = {}
+_inflight_lock = asyncio.Lock()
+
+
+async def _cleanup_inflight(cache_key: str, delay_seconds: float = 1.0):
+    """
+    Clean up in-flight computation tracking after a delay.
+
+    Args:
+        cache_key: The cache key to clean up
+        delay_seconds: How long to wait before cleaning up (to allow waiting
+            requests to get results)
+    """
+    await asyncio.sleep(delay_seconds)
+    async with _inflight_lock:
+        _inflight_computations.pop(cache_key, None)
+        _inflight_results.pop(cache_key, None)
+        _inflight_errors.pop(cache_key, None)
+
+
 def cached_response(
     prefix: str, ttl_seconds: int, key_tags: Optional[List[str]] = None
 ):
     """
     Decorator to cache function responses based on normalized inputs.
+    Implements single-flight suppression to prevent cache stampedes.
 
     Args:
         prefix: Cache key namespace prefix
@@ -260,13 +286,80 @@ def cached_response(
 
             logger.debug(f"Cache MISS: {cache_key}")
 
-            # Execute function and cache result
-            result = await func(*args, **kwargs)
+            # Single-flight suppression logic
+            async with _inflight_lock:
+                event = _inflight_computations.get(cache_key)
+                if event:
+                    if event.is_set():
+                        # Computation already completed
+                        if cache_key in _inflight_results:
+                            logger.debug(
+                                f"Returning already computed result for key: {cache_key}"
+                            )
+                            return _inflight_results[cache_key]
+                        elif cache_key in _inflight_errors:
+                            logger.debug(
+                                f"Raising already recorded error for key: {cache_key}"
+                            )
+                            raise _inflight_errors[cache_key]
+                    else:
+                        # Computation in progress, wait for it
+                        metrics.SINGLE_FLIGHT_SUPPRESSED.labels(prefix=prefix).inc()
+                        logger.debug(f"Single-flight suppressed for key: {cache_key}")
+                        is_computing = False
+                else:
+                    # We're the first request, create an event for others to wait on
+                    event = asyncio.Event()
+                    _inflight_computations[cache_key] = event
+                    is_computing = True
+                    logger.debug(f"Created new event for key: {cache_key}")
 
-            # Cache the result
-            cache.set(cache_key, result, ttl_seconds)
+            if is_computing:
+                # We need to compute the value
+                try:
+                    logger.debug(f"Computing value for key: {cache_key}")
+                    result = await func(*args, **kwargs)
 
-            return result
+                    # Store the result temporarily for waiting requests
+                    async with _inflight_lock:
+                        _inflight_results[cache_key] = result
+                        metrics.SINGLE_FLIGHT_COMPLETED.labels(prefix=prefix).inc()
+
+                    # Cache the result for future requests
+                    cache.set(cache_key, result, ttl_seconds)
+
+                    # Signal all waiting requests and schedule cleanup
+                    event.set()
+                    asyncio.create_task(_cleanup_inflight(cache_key))
+
+                    return result
+
+                except Exception as e:
+                    async with _inflight_lock:
+                        _inflight_errors[cache_key] = e
+                        metrics.SINGLE_FLIGHT_FAILED.labels(prefix=prefix).inc()
+                    # Still signal waiting requests (they'll get the error)
+                    event.set()
+                    # Don't store error for future requests - allow retry
+                    asyncio.create_task(_cleanup_inflight(cache_key, delay_seconds=0.1))
+                    raise
+            else:
+                # We're waiting for the computation to complete
+                logger.debug(f"Waiting for event on key: {cache_key}")
+                await event.wait()
+                logger.debug(f"Event completed for key: {cache_key}")
+
+                # After event is set, check for result or error
+                if cache_key in _inflight_results:
+                    return _inflight_results[cache_key]
+                elif cache_key in _inflight_errors:
+                    raise _inflight_errors[cache_key]
+                else:
+                    # This shouldn't happen, but fall back to direct computation
+                    logger.warning(f"No result found after event for key: {cache_key}")
+                    result = await func(*args, **kwargs)
+                    cache.set(cache_key, result, ttl_seconds)
+                    return result
 
         @wraps(func)
         def sync_wrapper(*args, **kwargs):

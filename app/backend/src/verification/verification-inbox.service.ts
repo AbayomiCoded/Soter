@@ -1,7 +1,10 @@
+import { VerificationInboxEventsService } from './verification-inbox-events.service';
+
 import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  Optional,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
@@ -57,6 +60,10 @@ export class VerificationInboxService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
+    // Optional so consumers that construct this service without the SSE hub
+    // keep working unchanged; when present, reviewer clients get live updates.
+    @Optional()
+    private readonly inboxEvents?: VerificationInboxEventsService,
   ) {}
 
   async getInbox(
@@ -229,6 +236,18 @@ export class VerificationInboxService {
         },
       });
     }
+
+    // Fan out the review decision so connected reviewer clients update live
+    // instead of polling. Bulk actions route through this method per item, so
+    // they are covered by the same event.
+    this.inboxEvents?.publish('inbox.item.updated', {
+      verificationId: updated.id,
+      status: updated.status,
+      previousStatus: verification.status,
+      reviewedBy: updated.reviewedBy,
+      reviewedAt: updated.reviewedAt?.toISOString() ?? null,
+      deepLink: `/verification/${updated.id}`,
+    });
 
     return updated;
   }

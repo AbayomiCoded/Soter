@@ -3,14 +3,47 @@ Configuration module for Soter AI Service
 Handles environment variables and API key management
 """
 
-from typing import Literal, Optional, Dict, Any
-from pydantic import model_validator, HttpUrl, Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
 import logging
 import os
+import re
 import secrets
+from typing import Literal, Optional
+
+from pydantic import model_validator, HttpUrl
+from pydantic_core import PydanticUndefined
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
+
+
+class ConfigurationError(ValueError):
+    """Raised when startup configuration is invalid or incomplete.
+
+    The message names *every* offending configuration key at once so
+    operators can fix all problems in a single deployment cycle. Secret
+    values are never included in the message.
+    """
+
+
+#: Settings fields whose values must never appear in logs or error messages.
+_SECRET_FIELDS = frozenset(
+    {
+        "openai_api_key",
+        "groq_api_key",
+        "ai_webhook_secret",
+        "artifact_signing_secret",
+    }
+)
+
+_WEBHOOK_SECRET_PLACEHOLDER = "change-me-to-a-strong-random-secret"
+_MIN_WEBHOOK_SECRET_LENGTH = 16
+
+# slowapi rate limit strings, e.g. "10/minute".
+_RATE_LIMIT_PATTERN: re.Pattern[str] = re.compile(
+    r"^\s*\d+\s*/\s*(second|minute|hour)\s*$"
+)
+
+_REDIS_SCHEMES = ("redis://", "rediss://", "unix://")
 
 
 class Settings(BaseSettings):
@@ -90,6 +123,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     host: str = "0.0.0.0"
     port: int = 8000
+    drain_timeout_seconds: int = 30
 
     # Redis and Celery settings
     redis_url: str = "redis://localhost:6379/0"
@@ -168,6 +202,154 @@ class Settings(BaseSettings):
         if not has_key:
             logger.warning("No API keys configured. AI features will be unavailable.")
         return has_key
+
+    def validate_configuration(self) -> None:
+        """Validate the full configuration, raising on the first pass.
+
+        Every missing or malformed key is collected and reported together so
+        a single boot attempt surfaces all problems. Error messages name
+        configuration keys only - secret values are never included.
+
+        Raises:
+            ConfigurationError: if any required or optional-but-set value is
+                invalid. The service must not start serving in that case.
+        """
+        errors: list[str] = []
+
+        def _add(key: str, problem: str) -> None:
+            errors.append(f"{key}: {problem}")
+
+        # --- Provider keys: set-but-blank is malformed -------------------
+        if self.openai_api_key is not None and not self.openai_api_key.strip():
+            _add("OPENAI_API_KEY", "is set but blank")
+        if self.groq_api_key is not None and not self.groq_api_key.strip():
+            _add("GROQ_API_KEY", "is set but blank")
+
+        # --- Callback/webhook signing secret -----------------------------
+        if self.ai_webhook_secret is not None:
+            webhook_secret = self.ai_webhook_secret.strip()
+            if not webhook_secret:
+                _add("AI_WEBHOOK_SECRET", "is set but blank")
+            elif webhook_secret == _WEBHOOK_SECRET_PLACEHOLDER:
+                _add(
+                    "AI_WEBHOOK_SECRET",
+                    "is still set to the example placeholder value; generate a "
+                    "strong random secret instead",
+                )
+            elif len(webhook_secret) < _MIN_WEBHOOK_SECRET_LENGTH:
+                _add(
+                    "AI_WEBHOOK_SECRET",
+                    f"must be at least {_MIN_WEBHOOK_SECRET_LENGTH} characters",
+                )
+
+        # --- Redis URL scheme --------------------------------------------
+        # Never echo the URL itself - it may embed credentials.
+        redis_url = str(self.redis_url)
+        if not redis_url.startswith(_REDIS_SCHEMES):
+            scheme = redis_url.split("://", 1)[0] if "://" in redis_url else "<none>"
+            _add(
+                "REDIS_URL",
+                f"must use one of {', '.join(_REDIS_SCHEMES)} schemes "
+                f"(got '{scheme}://')",
+            )
+
+        # --- Rate limit strings consumed by slowapi ----------------------
+        for key, rate_limit in (
+            ("REQUEST_RATE_LIMIT", self.request_rate_limit),
+            ("DEAD_LETTER_REPLAY_RATE_LIMIT", self.dead_letter_replay_rate_limit),
+        ):
+            if not _RATE_LIMIT_PATTERN.match(str(rate_limit)):
+                _add(
+                    key,
+                    f"must match '<count>/(second|minute|hour)' (got {rate_limit!r})",
+                )
+
+        # --- Numeric settings must be positive ---------------------------
+        positive_numeric_settings = (
+            ("LLM_TIMEOUT_SECONDS", self.llm_timeout_seconds),
+            ("CACHE_TTL_TASK_STATUS", self.cache_ttl_task_status),
+            ("CACHE_TTL_ARTIFACT_ACCESS", self.cache_ttl_artifact_access),
+            ("CACHE_TTL_VERIFICATION", self.cache_ttl_verification),
+            ("TASK_RETRY_DELAY_SECONDS", self.task_retry_delay_seconds),
+            (
+                "VERIFICATION_ARTIFACT_URL_TTL_SECONDS",
+                self.verification_artifact_url_ttl_seconds,
+            ),
+            ("PROOF_OF_LIFE_MIN_FACE_SIZE", self.proof_of_life_min_face_size),
+        )
+        for key, value in positive_numeric_settings:
+            if value <= 0:
+                _add(key, f"must be a positive number (got {value})")
+
+        # --- Bounded numeric settings ------------------------------------
+        if not 0.0 <= self.proof_of_life_confidence_threshold <= 1.0:
+            _add(
+                "PROOF_OF_LIFE_CONFIDENCE_THRESHOLD",
+                f"must be between 0.0 and 1.0 (got {self.proof_of_life_confidence_threshold})",
+            )
+        if not 1 <= int(self.port) <= 65535:
+            _add("PORT", f"must be between 1 and 65535 (got {self.port})")
+
+        # --- CORS origins: entries must be absolute origins --------------
+        for key, raw in (
+            ("CORS_ALLOWED_ORIGINS", self.cors_allowed_origins),
+            ("CORS_CUSTOM_ORIGINS", self.cors_custom_origins),
+        ):
+            for entry in raw.split(","):
+                entry = entry.strip()
+                if not entry:
+                    continue
+                if not entry.startswith(("http://", "https://")):
+                    _add(key, "origin entries must start with http:// or https://")
+                    break
+
+        # --- Production requirements (defense in depth) ------------------
+        # apply_environment_defaults already rejects this at construction
+        # time; re-checking here keeps validate_configuration() authoritative.
+        if self.app_env == "production" and not (
+            self.openai_api_key or self.groq_api_key or self.test_provider_mode
+        ):
+            _add(
+                "OPENAI_API_KEY / GROQ_API_KEY / TEST_PROVIDER_MODE",
+                "production requires at least one provider API key or "
+                "TEST_PROVIDER_MODE=true",
+            )
+
+        if errors:
+            summary = "\n  - ".join(errors)
+            logger.error(
+                "configuration_validation_failed error_count=%d invalid_keys=%s",
+                len(errors),
+                ", ".join(error.split(":", 1)[0] for error in errors),
+            )
+            raise ConfigurationError(f"Invalid configuration:\n  - {summary}")
+
+    def report_boot_configuration(
+        self, logger_: Optional[logging.Logger] = None
+    ) -> None:
+        """Log the effective configuration at DEBUG level on boot.
+
+        Optional values that are still at their declared defaults are
+        reported explicitly so operators can see which knobs were left
+        untouched. Secret-valued fields are never logged - only whether they
+        are set - consistent with ``logging_redaction.py``.
+        """
+        log = logger_ or logger
+
+        for name, field in type(self).model_fields.items():
+            display_name = name.upper()
+            if name in _SECRET_FIELDS:
+                state = "<set>" if getattr(self, name) else "<unset>"
+                log.debug("config %s=%s", display_name, state)
+                continue
+            value = getattr(self, name)
+            default = field.default
+            if default is PydanticUndefined:
+                continue
+            # str() on both sides keeps the comparison stable when pydantic
+            # coerced the raw default into a richer type (e.g. HttpUrl).
+            if value == default or str(value) == str(default):
+                log.debug("config default %s=%r", display_name, value)
 
     def get_active_provider(self) -> Optional[str]:
         if self.test_provider_mode:

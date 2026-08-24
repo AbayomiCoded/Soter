@@ -38,7 +38,9 @@ const KEY_DISTRIBUTORS: Symbol = symbol_short!("dstrbtrs"); // Map<Address, bool
 const KEY_PAUSED: Symbol = symbol_short!("paused");
 const KEY_PAUSE_CREATE: Symbol = symbol_short!("p_create");
 const KEY_PAUSE_CLAIM: Symbol = symbol_short!("p_claim");
+const KEY_PAUSE_REFUND: Symbol = symbol_short!("p_refund");
 const KEY_PAUSE_WITHDRAW: Symbol = symbol_short!("p_wdrw");
+const KEY_CAMPAIGN_PAUSED: Symbol = symbol_short!("camp_pzd"); // Map<String, bool>
 const KEY_TOTAL_CLAIMED: Symbol = symbol_short!("claimed"); // Map<Address, i128>
 const KEY_PENDING_ADMIN: Symbol = symbol_short!("pend_adm");
 const META_MERKLE_ROOT_KEY: &str = "merkle_root";
@@ -226,6 +228,21 @@ pub struct ActionPausedEvent {
 pub struct ActionUnpausedEvent {
     pub admin: Address,
     pub action: Symbol,
+}
+
+/// Emitted when an admin pauses a single campaign, identified by the
+/// `campaign_ref` metadata value shared by its packages.
+#[contractevent]
+pub struct CampaignPausedEvent {
+    pub admin: Address,
+    pub campaign_ref: String,
+}
+
+/// Emitted when an admin unpauses a single campaign.
+#[contractevent]
+pub struct CampaignUnpausedEvent {
+    pub admin: Address,
+    pub campaign_ref: String,
 }
 
 /// Emitted when a delegate is added/updated for a package.
@@ -605,6 +622,75 @@ impl AidEscrow {
         env.storage().instance().get(&KEY_PAUSED).unwrap_or(false)
     }
 
+    /// Admin-only. Pauses a single campaign, identified by the `campaign_ref`
+    /// metadata value shared by its packages.
+    /// While paused, `claim`, `disburse`, and `refund` are blocked for any
+    /// package tagged with this `campaign_ref`; other campaigns are unaffected.
+    /// Emits a `CampaignPausedEvent`.
+    ///
+    /// # Errors
+    /// Returns `Error::NotAuthorized` if caller is not the admin.
+    pub fn pause_campaign(env: Env, campaign_ref: String) -> Result<(), Error> {
+        let admin = Self::get_admin(env.clone())?;
+        admin.require_auth();
+
+        let mut paused: Map<String, bool> = env
+            .storage()
+            .instance()
+            .get(&KEY_CAMPAIGN_PAUSED)
+            .unwrap_or(Map::new(&env));
+        paused.set(campaign_ref.clone(), true);
+        env.storage().instance().set(&KEY_CAMPAIGN_PAUSED, &paused);
+
+        CampaignPausedEvent {
+            admin,
+            campaign_ref,
+        }
+        .publish(&env);
+        Ok(())
+    }
+
+    /// Admin-only. Unpauses a single campaign.
+    /// Emits a `CampaignUnpausedEvent`.
+    ///
+    /// # Errors
+    /// Returns `Error::NotAuthorized` if caller is not the admin.
+    pub fn unpause_campaign(env: Env, campaign_ref: String) -> Result<(), Error> {
+        let admin = Self::get_admin(env.clone())?;
+        admin.require_auth();
+
+        let mut paused: Map<String, bool> = env
+            .storage()
+            .instance()
+            .get(&KEY_CAMPAIGN_PAUSED)
+            .unwrap_or(Map::new(&env));
+        paused.set(campaign_ref.clone(), false);
+        env.storage().instance().set(&KEY_CAMPAIGN_PAUSED, &paused);
+
+        CampaignUnpausedEvent {
+            admin,
+            campaign_ref,
+        }
+        .publish(&env);
+        Ok(())
+    }
+
+    /// Returns `true` if `campaign_ref` is currently paused, either directly
+    /// or because the contract is globally paused (global pause always takes
+    /// precedence over campaign-level state).
+    pub fn is_campaign_paused(env: Env, campaign_ref: String) -> bool {
+        if Self::is_paused(env.clone()) {
+            return true;
+        }
+
+        let paused: Map<String, bool> = env
+            .storage()
+            .instance()
+            .get(&KEY_CAMPAIGN_PAUSED)
+            .unwrap_or(Map::new(&env));
+        paused.get(campaign_ref).unwrap_or(false)
+    }
+
     /// Returns the current contract configuration.
     /// Falls back to defaults (`min_amount: 1`, `max_expires_in: 0`, empty token list)
     /// if no config has been explicitly set.
@@ -943,6 +1029,8 @@ impl AidEscrow {
             .get(&key)
             .ok_or(Error::PackageNotFound)?;
 
+        Self::check_campaign_paused(&env, &package.metadata)?;
+
         if package.status != PackageStatus::Created {
             return Err(Error::PackageNotActive);
         }
@@ -998,6 +1086,8 @@ impl AidEscrow {
             .persistent()
             .get(&key)
             .ok_or(Error::PackageNotFound)?;
+
+        Self::check_campaign_paused(&env, &package.metadata)?;
 
         if package.status != PackageStatus::Created {
             return Err(Error::PackageNotActive);
@@ -1055,6 +1145,8 @@ impl AidEscrow {
             .persistent()
             .get(&key)
             .ok_or(Error::PackageNotFound)?;
+
+        Self::check_campaign_paused(&env, &package.metadata)?;
 
         if package.status != PackageStatus::Created {
             return Err(Error::PackageNotActive);
@@ -1132,6 +1224,8 @@ impl AidEscrow {
             .get(&key)
             .ok_or(Error::PackageNotFound)?;
 
+        Self::check_campaign_paused(&env, &package.metadata)?;
+
         if package.status != PackageStatus::Created {
             return Err(Error::PackageNotActive);
         }
@@ -1205,6 +1299,7 @@ impl AidEscrow {
     }
 
     pub fn refund(env: Env, id: u64) -> Result<(), Error> {
+        Self::check_action_paused(&env, symbol_short!("refund"))?;
         let admin = Self::get_admin(env.clone())?;
         admin.require_auth();
 
@@ -1214,6 +1309,8 @@ impl AidEscrow {
             .persistent()
             .get(&key)
             .ok_or(Error::PackageNotFound)?;
+
+        Self::check_campaign_paused(&env, &package.metadata)?;
 
         // Can only refund if Expired or Cancelled.
         // If Created, must Revoke first. If Claimed, impossible.
@@ -1458,9 +1555,41 @@ impl AidEscrow {
             Ok(KEY_PAUSE_CLAIM)
         } else if action == symbol_short!("withdraw") {
             Ok(KEY_PAUSE_WITHDRAW)
+        } else if action == symbol_short!("refund") {
+            Ok(KEY_PAUSE_REFUND)
         } else {
             Err(Error::InvalidState)
         }
+    }
+
+    /// Extracts the `campaign_ref` metadata value from a package, if present.
+    fn campaign_ref_from_metadata(env: &Env, metadata: &Map<Symbol, String>) -> Option<String> {
+        let key = Symbol::new(env, "campaign_ref");
+        metadata.get(key)
+    }
+
+    /// Blocks the caller's action if the package's campaign is paused, or if
+    /// the contract is globally paused. Global pause always takes precedence;
+    /// packages without a `campaign_ref` are never blocked by campaign state.
+    fn check_campaign_paused(env: &Env, metadata: &Map<Symbol, String>) -> Result<(), Error> {
+        if Self::is_paused(env.clone()) {
+            return Err(Error::ContractPaused);
+        }
+
+        let campaign_ref = match Self::campaign_ref_from_metadata(env, metadata) {
+            Some(r) => r,
+            None => return Ok(()),
+        };
+
+        let paused: Map<String, bool> = env
+            .storage()
+            .instance()
+            .get(&KEY_CAMPAIGN_PAUSED)
+            .unwrap_or(Map::new(env));
+        if paused.get(campaign_ref).unwrap_or(false) {
+            return Err(Error::ContractPaused);
+        }
+        Ok(())
     }
 
     fn decrement_locked(env: &Env, token: &Address, amount: i128) {
