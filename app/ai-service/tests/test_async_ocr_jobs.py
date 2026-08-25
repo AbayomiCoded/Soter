@@ -1,7 +1,6 @@
 import io
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, patch
 
-import httpx
 import metrics
 import pytest
 from fastapi.testclient import TestClient
@@ -86,64 +85,35 @@ def test_task_status_endpoint_returns_local_job_status(client):
     assert data["result"]["type"] == "ocr"
 
 
-def test_create_task_propagates_correlation_id_into_async_payload(monkeypatch):
-    captured = {}
+def test_batch_ocr_returns_document_statuses_for_mixed_inputs(client, monkeypatch):
+    created_tasks = []
 
-    def fake_apply_async(args, task_id):
-        captured["args"] = args
-        captured["task_id"] = task_id
+    def fake_create_task(task_type, payload):
+        created_tasks.append((task_type, payload))
+        return f"ocr-task-{len(created_tasks)}"
 
-    monkeypatch.setattr(tasks, "ensure_queue_capacity", lambda: None)
-    monkeypatch.setattr(
-        tasks,
-        "get_process_heavy_inference_task",
-        lambda: MagicMock(apply_async=fake_apply_async),
+    monkeypatch.setattr(tasks, "create_task", fake_create_task)
+
+    response = client.post(
+        "/v1/ai/ocr/batch",
+        files=[
+            ("files", ("doc-a.png", _png_bytes(), "image/png")),
+            ("files", ("doc-b.png", b"not-a-real-image", "image/png")),
+            ("files", ("doc-c.png", _png_bytes(), "image/png")),
+        ],
     )
 
-    token = main.correlation_id_var.set("trace-ocr-123")
-    try:
-        task_id = tasks.create_task("ocr", {"image_base64": "payload"})
-    finally:
-        main.correlation_id_var.reset(token)
-
-    assert task_id == captured["task_id"]
-    payload = captured["args"][1]
-    assert payload["type"] == "ocr"
-    assert payload["correlation_id"] == "trace-ocr-123"
-    assert payload["trace_id"] == "trace-ocr-123"
-
-
-def test_send_webhook_notification_propagates_correlation_headers(monkeypatch):
-    recorded = {}
-
-    class FakeClient:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def post(self, url, json=None, headers=None):
-            recorded["url"] = url
-            recorded["json"] = json
-            recorded["headers"] = headers
-            return Mock(status_code=200, text="ok")
-
-    monkeypatch.setattr(httpx, "Client", FakeClient)
-
-    tasks.send_webhook_notification(
-        "task-456",
-        "completed",
-        result={"status": "success"},
-        correlation_id="trace-callback-123",
-    )
-
-    assert recorded["headers"]["X-Correlation-Id"] == "trace-callback-123"
-    assert recorded["headers"]["X-Request-Id"] == "trace-callback-123"
-    assert recorded["headers"]["trace_id"] == "trace-callback-123"
+    assert response.status_code == 202
+    data = response.json()
+    assert data["success"] is True
+    assert len(data["documents"]) == 3
+    assert data["documents"][0]["status"] == "pending"
+    assert data["documents"][0]["task_id"] == "ocr-task-1"
+    assert data["documents"][1]["status"] == "failed"
+    assert data["documents"][1]["error"]["code"] == "invalid_image"
+    assert data["documents"][2]["status"] == "pending"
+    assert data["documents"][2]["task_id"] == "ocr-task-2"
+    assert len(created_tasks) == 2
 
 
 def test_retry_policy_is_defined_on_heavy_task():

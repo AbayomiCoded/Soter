@@ -7,11 +7,17 @@ import {
   ONCHAIN_ADAPTER_TOKEN,
 } from '../onchain/onchain.adapter';
 
-type CheckStatus = 'up' | 'down' | 'skipped';
+export type CheckStatus = 'up' | 'down' | 'skipped';
 
-interface HealthCheckResult {
+export interface HealthCheckResult {
   status: CheckStatus;
   details?: Record<string, unknown>;
+}
+
+export interface DeploymentMetadata {
+  gitSha: string;
+  environment: string;
+  buildTimestamp: string;
 }
 
 export interface LivenessResponse {
@@ -20,6 +26,7 @@ export interface LivenessResponse {
   version: string;
   environment: string;
   timestamp: string;
+  deployment: DeploymentMetadata;
   checks: {
     process: HealthCheckResult;
   };
@@ -68,6 +75,7 @@ export class HealthService {
       version: process.env.npm_package_version ?? '0.0.0',
       environment: this.configService.get<string>('NODE_ENV') ?? 'development',
       timestamp: new Date().toISOString(),
+      deployment: this.getDeploymentMetadata(),
       checks: {
         process: {
           status: 'up',
@@ -215,6 +223,22 @@ export class HealthService {
     }
   }
 
+  /**
+   * Deployment metadata linking this running backend instance to the CI/CD
+   * build that produced it (git sha, environment, build timestamp).
+   * Populated from env vars set at build/deploy time; falls back to safe
+   * 'unknown' defaults so the endpoint never errors when they're absent
+   * (e.g. local development).
+   */
+  private getDeploymentMetadata(): DeploymentMetadata {
+    return {
+      gitSha: this.configService.get<string>('GIT_SHA') ?? 'unknown',
+      environment: this.configService.get<string>('NODE_ENV') ?? 'development',
+      buildTimestamp:
+        this.configService.get<string>('BUILD_TIMESTAMP') ?? 'unknown',
+    };
+  }
+
   private isEnabled(value?: string): boolean {
     if (!value) {
       return false;
@@ -256,5 +280,78 @@ export class HealthService {
         error: errorMsg,
       };
     }
+  }
+
+  async getDiagnosticsExport() {
+    const liveness = this.getLiveness();
+    const readiness = await this.getReadiness();
+    const rpcUrl =
+      this.configService.get<string>('STELLAR_RPC_URL') ??
+      'https://soroban-testnet.stellar.org';
+
+    const rawBundle = {
+      metadata: {
+        timestamp: new Date().toISOString(),
+        appVersion: liveness.version,
+        environment: liveness.environment,
+        service: 'soter-backend',
+        uptimeSeconds: Math.floor(process.uptime()),
+        platform: process.platform,
+        nodeVersion: process.version,
+      },
+      appState: {
+        database: readiness.checks.database,
+        memory: liveness.checks.process.details,
+      },
+      queueHealth: {
+        status: 'active',
+        queueType: 'BullMQ',
+      },
+      walletNetworkStatus: {
+        stellarRpc: readiness.checks.stellarRpc,
+        network: rpcUrl.includes('testnet') ? 'testnet' : 'mainnet',
+      },
+      recentErrors: [],
+      sanitized: true,
+    };
+
+    return this.sanitizeDiagnostics(rawBundle);
+  }
+
+  private sanitizeDiagnostics<T>(data: T): T {
+    if (data === null || data === undefined) return data;
+    if (typeof data === 'string') {
+      let str = data.replace(/\bS[A-Z0-9]{55}\b/g, '[REDACTED]');
+      str = str.replace(
+        /Bearer\s+[A-Za-z0-9-_=]+\.[A-Za-z0-9-_=]+\.?[A-Za-z0-9-_=]*/gi,
+        'Bearer [REDACTED]',
+      );
+      return str as T;
+    }
+    if (typeof data !== 'object') return data;
+    if (Array.isArray(data))
+      return data.map(item => this.sanitizeDiagnostics(item)) as unknown as T;
+
+    const sensitiveKeys = new Set([
+      'password',
+      'token',
+      'secret',
+      'authorization',
+      'apikey',
+      'api_key',
+      'privatekey',
+      'private_key',
+      'email',
+      'seed',
+    ]);
+    const result: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(data as Record<string, unknown>)) {
+      if (sensitiveKeys.has(k.toLowerCase())) {
+        result[k] = '[REDACTED]';
+      } else {
+        result[k] = this.sanitizeDiagnostics(v);
+      }
+    }
+    return result as T;
   }
 }

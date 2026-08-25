@@ -11,6 +11,7 @@ import { BarCodeScanner } from 'expo-barcode-scanner';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/types';
 import { useTheme } from '../theme/ThemeContext';
+import { createScanDeduper } from './scanDeduper';
 
 type ScannerScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'Scanner'>;
 
@@ -46,6 +47,7 @@ export const parseAidIdFromQRCode = (data: string): string | null => {
 export const ScannerScreen: React.FC<Props> = ({ navigation }) => {
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
   const [scanned, setScanned] = useState(false);
+  const [isDuplicateScan] = useState(() => createScanDeduper());
   const { colors } = useTheme();
 
   useEffect(() => {
@@ -58,6 +60,8 @@ export const ScannerScreen: React.FC<Props> = ({ navigation }) => {
   }, []);
 
   const handleBarCodeScanned = ({ type, data }: { type: string; data: string }) => {
+    if (isDuplicateScan(data.trim())) return;
+
     setScanned(true);
 
     const aidId = parseAidIdFromQRCode(data);
