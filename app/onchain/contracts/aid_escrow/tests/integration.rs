@@ -616,5 +616,8 @@ fn test_extend_expiry_absolute_and_relative_semantics() {
 
     let additional_time = 500;
     client.extend_expiration(&11, &additional_time);
-    assert_eq!(client.get_package(&11).expires_at, initial_expiry2 + additional_time);
+    assert_eq!(
+        client.get_package(&11).expires_at,
+        initial_expiry2 + additional_time
+    );
 }
