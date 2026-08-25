@@ -12,13 +12,10 @@
 //! - Optimized storage operations
 //! - Comprehensive error handling
 
-use soroban_sdk::{contracttype, symbol_short, Address, Env, Map, Symbol, Vec};
+use soroban_sdk::{contracttype, Address, Env, Map, Symbol, Vec};
 
+use crate::keys::{KEY_DELEGATES, KEY_DELEGATE_EXPIRY, KEY_DELEGATE_HISTORY};
 use crate::{Error, PackageStatus};
-
-pub const KEY_DELEGATES: Symbol = symbol_short!("dlgts");
-pub const KEY_DELEGATE_HISTORY: Symbol = symbol_short!("dlgh");
-pub const KEY_DELEGATE_EXPIRY: Symbol = symbol_short!("dlgexp");
 
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -84,12 +81,12 @@ fn is_delegate_expired(env: &Env, package_id: u64) -> bool {
 
 /// Validates that a package exists and is in a valid state for delegate operations.
 fn validate_package_state(env: &Env, package_id: u64) -> Result<(), Error> {
-    let package_key = (symbol_short!("pkg"), package_id);
-    if !env.storage().persistent().has(&package_key) {
+    let key = crate::keys::package_key(package_id);
+    if !env.storage().persistent().has(&key) {
         return Err(Error::PackageNotFound);
     }
 
-    let package: crate::Package = env.storage().persistent().get(&package_key).unwrap();
+    let package: crate::Package = env.storage().persistent().get(&key).unwrap();
 
     // Cannot modify delegates for claimed packages
     if package.status == PackageStatus::Claimed {
@@ -164,8 +161,8 @@ pub fn set_delegate(
     validate_package_state(env, package_id)?;
 
     // Get package to validate delegate is not the recipient
-    let package_key = (symbol_short!("pkg"), package_id);
-    let package: crate::Package = env.storage().persistent().get(&package_key).unwrap();
+    let key = crate::keys::package_key(package_id);
+    let package: crate::Package = env.storage().persistent().get(&key).unwrap();
 
     // Prevent setting delegate to the same address as recipient
     if delegate == &package.recipient {
@@ -385,9 +382,9 @@ pub fn sweep_expired_delegates(env: &Env, limit: u32) -> Result<u32, Error> {
             cleaned_count += 1;
 
             // Get recipient address from package if it exists
-            let package_key = (symbol_short!("pkg"), package_id);
-            let recipient = if env.storage().persistent().has(&package_key) {
-                let package: crate::Package = env.storage().persistent().get(&package_key).unwrap();
+            let key = crate::keys::package_key(package_id);
+            let recipient = if env.storage().persistent().has(&key) {
+                let package: crate::Package = env.storage().persistent().get(&key).unwrap();
                 package.recipient
             } else {
                 env.current_contract_address()
@@ -466,7 +463,7 @@ mod tests {
         env.as_contract(contract, || {
             env.storage()
                 .persistent()
-                .set(&(symbol_short!("pkg"), package_id), &package);
+                .set(&crate::keys::package_key(package_id), &package);
         });
     }
 
