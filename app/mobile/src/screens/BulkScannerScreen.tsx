@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Text,
   View,
@@ -13,6 +13,7 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/types';
 import { useTheme } from '../theme/ThemeContext';
 import { useSync } from '../contexts/SyncContext';
+import { createScanDeduper } from './scanDeduper';
 
 type BulkScannerScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'BulkScanner'>;
 
@@ -27,10 +28,12 @@ interface SessionStats {
   skipped: number;
 }
 
+type ScanResult = { status: 'success' | 'error' | 'skipped'; message: string };
+
 export const BulkScannerScreen: React.FC<Props> = ({ navigation }) => {
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [lastScanResult, setLastScanResult] = useState<{ status: 'success' | 'error'; message: string } | null>(null);
+  const [lastScanResult, setLastScanResult] = useState<ScanResult | null>(null);
   const [stats, setStats] = useState<SessionStats>({
     scanned: 0,
     verified: 0,
@@ -40,6 +43,7 @@ export const BulkScannerScreen: React.FC<Props> = ({ navigation }) => {
 
   const { colors } = useTheme();
   const { queueClaimConfirmation, isConnected } = useSync();
+  const [isDuplicateScan] = useState(() => createScanDeduper());
 
   useEffect(() => {
     const getBarCodeScannerPermissions = async () => {
@@ -52,11 +56,19 @@ export const BulkScannerScreen: React.FC<Props> = ({ navigation }) => {
 
   const handleBarCodeScanned = async ({ type, data }: { type: string; data: string }) => {
     if (isProcessing) return;
+
+    const normalizedData = data.trim();
+    if (isDuplicateScan(normalizedData)) {
+      setStats(prev => ({ ...prev, skipped: prev.skipped + 1 }));
+      setLastScanResult({ status: 'skipped', message: 'Duplicate scan skipped. Ready for the next package.' });
+      return;
+    }
+
     setIsProcessing(true);
 
     // Check if it's the correct format: soter://package/{id}
     const regex = /^soter:\/\/package\/(.+)$/;
-    const match = data.match(regex);
+    const match = normalizedData.match(regex);
 
     setStats(prev => ({ ...prev, scanned: prev.scanned + 1 }));
 
@@ -134,6 +146,10 @@ export const BulkScannerScreen: React.FC<Props> = ({ navigation }) => {
             <Text style={[styles.statValue, { color: colors.error }]}>{stats.failed}</Text>
             <Text style={styles.statLabel}>Failed</Text>
           </View>
+          <View style={styles.statItem}>
+            <Text style={[styles.statValue, { color: colors.warning }]}>{stats.skipped}</Text>
+            <Text style={styles.statLabel}>Skipped</Text>
+          </View>
         </View>
 
         <View style={styles.viewfinderContainer}>
@@ -152,7 +168,7 @@ export const BulkScannerScreen: React.FC<Props> = ({ navigation }) => {
           {lastScanResult && (
             <View style={[
               styles.resultBadge, 
-              { backgroundColor: lastScanResult.status === 'success' ? colors.success : colors.error }
+              { backgroundColor: lastScanResult.status === 'success' ? colors.success : lastScanResult.status === 'skipped' ? colors.warning : colors.error }
             ]}>
               <Text style={styles.resultText}>{lastScanResult.message}</Text>
             </View>
