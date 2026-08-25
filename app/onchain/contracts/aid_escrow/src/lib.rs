@@ -49,6 +49,11 @@ const META_MERKLE_ROOT_KEY: &str = "merkle_root";
 /// single invocation, keeping the call within Soroban resource limits.
 pub const MAX_BATCH_CLAIM_SIZE: u32 = 25;
 
+/// Maximum number of package IDs that `list_recipient_packages` may return in
+/// a single call.  Enforcing this keeps the response within Soroban's read-entry
+/// resource budget even for recipients with large package histories.
+pub const MAX_PAGE_SIZE: u32 = 50;
+
 // --- Data Types ---
 
 #[contracttype]
@@ -2167,12 +2172,18 @@ impl AidEscrow {
     ///
     /// # Arguments
     /// * `recipient` - The address to filter packages by
-    /// * `cursor` - Starting position for pagination (0-indexed)
-    /// * `limit` - Maximum number of results to return
+    /// * `cursor` - Starting position for pagination (0-indexed offset into the
+    ///              global package ID space; if `cursor >= package_counter` an
+    ///              empty result is returned)
+    /// * `limit` - Maximum number of results to return; capped at
+    ///             [`MAX_PAGE_SIZE`] to keep the call within Soroban resource
+    ///             limits
     ///
     /// # Returns
-    /// A Vec<u64> containing package IDs that belong to the recipient,
-    /// starting from the cursor position and limited by the limit parameter.
+    /// A `Vec<u64>` containing package IDs that belong to the recipient,
+    /// starting from `cursor` and bounded by the effective `limit`.
+    /// Use [`get_recipient_package_count`] to obtain the total count for
+    /// constructing subsequent page requests.
     pub fn list_recipient_packages(
         env: Env,
         recipient: Address,
@@ -2182,12 +2193,17 @@ impl AidEscrow {
         let package_counter: u64 = env.storage().instance().get(&KEY_PKG_COUNTER).unwrap_or(0);
         let mut result: Vec<u64> = Vec::new(&env);
 
-        // Calculate the end position: cursor + limit or package_counter, whichever comes first
-        let end_pos = if cursor.saturating_add(limit as u64) > package_counter {
-            package_counter
-        } else {
-            cursor.saturating_add(limit as u64)
-        };
+        // Enforce the page-size cap so callers cannot request unbounded reads.
+        let effective_limit = limit.min(MAX_PAGE_SIZE);
+
+        // Out-of-range cursor: nothing to return.
+        if cursor >= package_counter {
+            return result;
+        }
+
+        // Calculate the end position: cursor + effective_limit or package_counter,
+        // whichever comes first.
+        let end_pos = (cursor.saturating_add(effective_limit as u64)).min(package_counter);
 
         // Iterate from cursor to end_pos
         for id in cursor..end_pos {
@@ -2634,6 +2650,137 @@ mod tests {
 
         let page = client.list_recipient_packages(&recipient, &0, &3);
         assert_eq!(page.len(), 3);
+    }
+
+    // ---- Pagination acceptance tests (issue #963) ----
+
+    /// Empty result when no packages exist for the recipient.
+    #[test]
+    fn test_list_recipient_packages_empty() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        let recipient = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.init(&admin);
+
+        // No packages created — expect empty Vec.
+        let result = client.list_recipient_packages(&recipient, &0, &10);
+        assert_eq!(result.len(), 0);
+    }
+
+    /// Single-page retrieval: all packages fit inside one call.
+    #[test]
+    fn test_list_recipient_packages_single_page() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        let (token, sac, _) = setup_token(&env, &admin);
+
+        env.mock_all_auths();
+        client.init(&admin);
+
+        sac.mint(&admin, &30_000_000);
+        client.fund(&token, &admin, &30_000_000);
+
+        let meta = Map::new(&env);
+        for i in 0..3_u64 {
+            client.create_package(&admin, &i, &recipient, &10_000_000, &token, &86400, &meta);
+        }
+
+        // Request more than available — should return exactly 3.
+        let result = client.list_recipient_packages(&recipient, &0, &50);
+        assert_eq!(result.len(), 3);
+        // Count helper must agree.
+        assert_eq!(client.get_recipient_package_count(&recipient), 3);
+    }
+
+    /// Multi-page retrieval: iterate through pages and collect all package IDs.
+    #[test]
+    fn test_list_recipient_packages_multi_page() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        let (token, sac, _) = setup_token(&env, &admin);
+
+        env.mock_all_auths();
+        client.init(&admin);
+
+        sac.mint(&admin, &70_000_000);
+        client.fund(&token, &admin, &70_000_000);
+
+        let meta = Map::new(&env);
+        for i in 0..7_u64 {
+            client.create_package(&admin, &i, &recipient, &10_000_000, &token, &86400, &meta);
+        }
+
+        let total = client.get_recipient_package_count(&recipient);
+        assert_eq!(total, 7);
+
+        // Page 1: IDs 0..3
+        let page1 = client.list_recipient_packages(&recipient, &0, &3);
+        assert_eq!(page1.len(), 3);
+
+        // Page 2: IDs 3..6
+        let page2 = client.list_recipient_packages(&recipient, &3, &3);
+        assert_eq!(page2.len(), 3);
+
+        // Page 3: ID 6
+        let page3 = client.list_recipient_packages(&recipient, &6, &3);
+        assert_eq!(page3.len(), 1);
+
+        // All pages together cover all 7 packages.
+        assert_eq!(page1.len() + page2.len() + page3.len(), 7);
+    }
+
+    /// Out-of-range cursor returns an empty result without panicking.
+    #[test]
+    fn test_list_recipient_packages_out_of_range_cursor() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        let (token, sac, _) = setup_token(&env, &admin);
+
+        env.mock_all_auths();
+        client.init(&admin);
+
+        sac.mint(&admin, &10_000_000);
+        client.fund(&token, &admin, &10_000_000);
+
+        let meta = Map::new(&env);
+        client.create_package(&admin, &0, &recipient, &10_000_000, &token, &86400, &meta);
+
+        // cursor = 999 is way beyond the single package — must return empty.
+        let result = client.list_recipient_packages(&recipient, &999, &10);
+        assert_eq!(result.len(), 0);
+    }
+
+    /// MAX_PAGE_SIZE is enforced: passing a limit larger than MAX_PAGE_SIZE
+    /// must not return more than MAX_PAGE_SIZE items.
+    #[test]
+    fn test_list_recipient_packages_max_page_size_enforced() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        let (token, sac, _) = setup_token(&env, &admin);
+
+        env.mock_all_auths();
+        client.init(&admin);
+
+        // Create MAX_PAGE_SIZE + 5 packages so a full page is possible.
+        let n = (MAX_PAGE_SIZE + 5) as u64;
+        let total_amount = n as i128 * 10_000_000;
+        sac.mint(&admin, &total_amount);
+        client.fund(&token, &admin, &total_amount);
+
+        let meta = Map::new(&env);
+        for i in 0..n {
+            client.create_package(&admin, &i, &recipient, &10_000_000, &token, &86400, &meta);
+        }
+
+        // Requesting more than MAX_PAGE_SIZE must be silently capped.
+        let result = client.list_recipient_packages(&recipient, &0, &(MAX_PAGE_SIZE + 100));
+        assert!(result.len() <= MAX_PAGE_SIZE as u32);
     }
 
     #[test]
