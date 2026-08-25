@@ -38,7 +38,7 @@
     "expo-local-authentication": "^55.0.9",
     "expo-notifications": "^55.0.20",
     "expo-status-bar": "~3.0.9",
-    "expo-battery": "~7.0.3",
+    "expo-battery": "~7.0.0",
     "fast-text-encoding": "^1.0.6",
     "react": "19.1.0",
     "react-dom": "19.1.0",
