@@ -1537,9 +1537,16 @@ impl AidEscrow {
     }
 
     /// Admin-only package expiration extension.
+    /// Admin-only package expiration extension using a relative time delta.
+    ///
+    /// # Deprecated
+    /// This function is deprecated in favor of `extend_expiry` which uses absolute timestamps.
+    /// This function will be removed in a future version.
+    ///
     /// Requirements: Admin auth, existing package, status must be 'Created', additional_time > 0.
     /// Behavior: Adds additional_time to the package's expires_at timestamp.
     /// Cannot extend unbounded packages (expires_at == 0).
+    #[deprecated(note = "Use extend_expiry with absolute timestamp instead")]
     pub fn extend_expiration(env: Env, package_id: u64, additional_time: u64) -> Result<(), Error> {
         if additional_time == 0 {
             return Err(Error::InvalidAmount);
