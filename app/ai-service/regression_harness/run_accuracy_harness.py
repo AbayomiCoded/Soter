@@ -9,8 +9,6 @@ from typing import Any, Dict, List, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from regression_harness.deterministic_provider import DeterministicVerificationProvider
-
 LABELS = ["approve", "reject", "ambiguous"]
 BASELINE_TOLERANCE = 1e-6
 
@@ -45,7 +43,7 @@ def validate_fixtures(cases: List[Dict[str, Any]]) -> None:
 
 
 def run_suite(
-    cases: List[Dict[str, Any]], provider: DeterministicVerificationProvider
+    cases: List[Dict[str, Any]], provider: "DeterministicVerificationProvider"
 ) -> List[Dict[str, Any]]:
     """Run every case through the provider and return per-case outcomes."""
     outcomes = []
@@ -237,6 +235,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(f"ERROR: {exc}")
         return 2
+
+    from regression_harness.deterministic_provider import DeterministicVerificationProvider
 
     provider = DeterministicVerificationProvider()
     outcomes = run_suite(cases, provider)

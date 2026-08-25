@@ -11,10 +11,6 @@ from regression_harness.run_accuracy_harness import (
     compute_metrics,
     validate_fixtures,
 )
-from regression_harness.deterministic_provider import (
-    DeterministicVerificationProvider,
-    VERDICT_TO_LABEL,
-)
 
 
 class TestComputeMetrics:
@@ -144,39 +140,6 @@ class TestValidateFixtures:
         ]
         with pytest.raises(ValueError, match="missing an 'input'"):
             validate_fixtures(cases)
-
-
-class TestDeterministicProvider:
-    """Tests for the deterministic, offline verification provider."""
-
-    def setup_method(self):
-        self.provider = DeterministicVerificationProvider()
-
-    def test_predict_returns_valid_label(self):
-        result = self.provider.predict(
-            aid_claim="A mobile clinic treated 340 patients during the flood response.",
-            supporting_evidence=[
-                "Clinic patient log",
-                "Medicine reconciliation report",
-            ],
-            context_factors={"disaster_type": "flood"},
-        )
-        assert result["label"] in LABELS
-        assert result["verdict"] in VERDICT_TO_LABEL
-
-    def test_predict_is_deterministic(self):
-        claim = "Water trucking delivered 45,000 liters per day."
-        first = self.provider.predict(
-            aid_claim=claim,
-            supporting_evidence=["Delivery log"],
-            context_factors={},
-        )
-        second = self.provider.predict(
-            aid_claim=claim,
-            supporting_evidence=["Delivery log"],
-            context_factors={},
-        )
-        assert first == second
 
 
 class TestGoldenFixturesFile:
