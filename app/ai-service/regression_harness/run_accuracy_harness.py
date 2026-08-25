@@ -41,9 +41,7 @@ def validate_fixtures(cases: List[Dict[str, Any]]) -> None:
         expected_labels.add(expected)
     missing = [label for label in LABELS if label not in expected_labels]
     if missing:
-        raise ValueError(
-            "golden set is missing expected labels: " + ", ".join(missing)
-        )
+        raise ValueError("golden set is missing expected labels: " + ", ".join(missing))
 
 
 def run_suite(
@@ -291,4 +289,3 @@ def main(argv: Optional[List[str]] = None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-

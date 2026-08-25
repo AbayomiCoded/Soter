@@ -60,7 +60,9 @@ class DeterministicVerificationProvider:
         parsed = json.loads(response.content)
         verdict = parsed.get("verdict")
         if verdict not in VERDICT_TO_LABEL:
-            raise ValueError(f"unexpected verdict from deterministic provider: {verdict}")
+            raise ValueError(
+                f"unexpected verdict from deterministic provider: {verdict}"
+            )
         return {
             "verdict": verdict,
             "confidence": parsed.get("confidence"),

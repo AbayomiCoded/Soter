@@ -24,7 +24,12 @@ class TestComputeMetrics:
         outcomes = [
             {"id": "1", "expected": "approve", "predicted": "approve", "correct": True},
             {"id": "2", "expected": "reject", "predicted": "reject", "correct": True},
-            {"id": "3", "expected": "ambiguous", "predicted": "ambiguous", "correct": True},
+            {
+                "id": "3",
+                "expected": "ambiguous",
+                "predicted": "ambiguous",
+                "correct": True,
+            },
         ]
         metrics = compute_metrics(outcomes)
         assert metrics["total_cases"] == 3
@@ -150,7 +155,10 @@ class TestDeterministicProvider:
     def test_predict_returns_valid_label(self):
         result = self.provider.predict(
             aid_claim="A mobile clinic treated 340 patients during the flood response.",
-            supporting_evidence=["Clinic patient log", "Medicine reconciliation report"],
+            supporting_evidence=[
+                "Clinic patient log",
+                "Medicine reconciliation report",
+            ],
             context_factors={"disaster_type": "flood"},
         )
         assert result["label"] in LABELS
@@ -190,4 +198,3 @@ class TestGoldenFixturesFile:
             counts[case["expected"]] += 1
         for label in LABELS:
             assert counts[label] >= 3
-
