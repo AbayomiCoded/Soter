@@ -31,3 +31,5 @@ def test_valid_configuration_boots_and_serves():
     with TestClient(main.app) as client:
         response = client.get("/health")
         assert response.status_code == 200
+    # Reset the global app state so subsequent tests don't see a draining service.
+    main.app.state.is_shutting_down = False

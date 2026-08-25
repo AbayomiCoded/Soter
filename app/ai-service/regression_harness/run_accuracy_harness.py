@@ -5,9 +5,14 @@ import json
 import os
 import sys
 import time
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+if TYPE_CHECKING:
+    from regression_harness.deterministic_provider import (
+        DeterministicVerificationProvider,
+    )
 
 LABELS = ["approve", "reject", "ambiguous"]
 BASELINE_TOLERANCE = 1e-6
@@ -236,7 +241,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"ERROR: {exc}")
         return 2
 
-    from regression_harness.deterministic_provider import DeterministicVerificationProvider
+    from regression_harness.deterministic_provider import (
+        DeterministicVerificationProvider,
+    )
 
     provider = DeterministicVerificationProvider()
     outcomes = run_suite(cases, provider)
