@@ -143,6 +143,13 @@ pub struct Aggregates {
 }
 ```
 
+## Storage
+
+All ledger keys (singletons, namespaced package records, delegate data) are
+centralized in `src/keys.rs`. The canonical key-space reference — every key's
+encoded value, stored type, lifetime, and the keys a migration must consider —
+is documented in [`STORAGE_KEYS.md`](./STORAGE_KEYS.md).
+
 ## Events
 
 All state-changing operations emit events with stable topics for indexer consumption:
