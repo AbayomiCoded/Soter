@@ -599,6 +599,49 @@ fn test_sweep_emits_delegate_revoked_event() {
 }
 
 #[test]
+fn test_sweep_emits_package_swept_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let (token_client, token_admin_client) = setup_token(&env, &admin);
+
+    let contract_id = env.register(AidEscrow, ());
+    let client = AidEscrowClient::new(&env, &contract_id);
+    client.init(&admin);
+    token_admin_client.mint(&admin, &(10 * UNIT));
+    client.fund(&token_client.address, &admin, &(5 * UNIT));
+
+    let now = env.ledger().timestamp();
+    let expires_at = now + 50;
+    client.create_package(
+        &admin,
+        &99u64,
+        &recipient,
+        &UNIT,
+        &token_client.address,
+        &expires_at,
+        &Map::new(&env),
+    );
+
+    // Advance past expiry
+    env.ledger().set_timestamp(expires_at + 1);
+
+    // Perform sweep
+    let swept = client.sweep_expired_packages(&10);
+    assert_eq!(swept, 1);
+
+    // Verify PackageSwept event was emitted
+    let data = last_event_data(&env, &contract_id, "package_swept");
+    assert_eq!(data_u64(&env, &data, "package_id"), 99);
+    assert_eq!(data_address(&env, &data, "recipient"), recipient);
+    assert_eq!(data_i128(&env, &data, "amount"), UNIT);
+    assert_eq!(data_address(&env, &data, "actor"), contract_id);
+    assert_field_exists(&env, &data, "timestamp");
+}
+
+#[test]
 fn test_delegate_claimed_event() {
     let env = Env::default();
     env.mock_all_auths();

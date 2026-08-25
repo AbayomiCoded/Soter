@@ -228,6 +228,17 @@ pub struct PackageRefunded {
     pub timestamp: u64,
 }
 
+/// Emitted when the sweep transitions an expired package to the terminal
+/// `Expired` state, releasing its funds from the locked total.
+#[contractevent]
+pub struct PackageSwept {
+    pub package_id: u64,
+    pub recipient: Address,
+    pub amount: i128,
+    pub actor: Address,
+    pub timestamp: u64,
+}
+
 #[contractevent]
 pub struct BatchCreatedEvent {
     pub ids: Vec<u64>,
@@ -2499,6 +2510,75 @@ impl AidEscrow {
     pub fn sweep_expired_delegates(env: Env, limit: u32) -> Result<u32, Error> {
         crate::delegate::sweep_expired_delegates(&env, limit)
     }
+
+    /// Sweeps expired packages in bounded batches, transitioning them to the
+    /// terminal `Expired` state and releasing their funds from the locked
+    /// total (`get_total_locked`) back to the pool.
+    ///
+    /// Safe to call repeatedly and by any address (no admin auth required)
+    /// and idempotent: packages that are not `Created` or not yet past their
+    /// `expires_at` are skipped, and a sweep with nothing left to do returns
+    /// `0`.
+    ///
+    /// Emits a `PackageSwept` event per swept package.
+    pub fn sweep_expired_packages(env: Env, limit: u32) -> Result<u32, Error> {
+        let max_limit = if limit == 0 { 50 } else { limit.min(100) };
+
+        let count: u64 = env.storage().instance().get(&KEY_PKG_IDX).unwrap_or(0);
+        let now = env.ledger().timestamp();
+
+        let mut swept_count: u32 = 0;
+
+        for i in 0..count {
+            if swept_count >= max_limit {
+                break;
+            }
+
+            let idx_key = (symbol_short!("pidx"), i);
+            let pkg_id: u64 = match env.storage().persistent().get(&idx_key) {
+                Some(id) => id,
+                None => continue,
+            };
+
+            let pkg_key = (symbol_short!("pkg"), pkg_id);
+            let mut package: Package = match env.storage().persistent().get(&pkg_key) {
+                Some(package) => package,
+                None => continue,
+            };
+
+            // Only `Created` packages can expire; terminal states are skipped.
+            if package.status != PackageStatus::Created {
+                continue;
+            }
+
+            // Mirror claim/refund expiry semantics: a package is expired only
+            // after its `expires_at` has passed (claim at the exact boundary
+            // timestamp is still allowed).
+            if package.expires_at == 0 || now <= package.expires_at {
+                continue;
+            }
+
+            // Transition to the terminal Expired state and release the locked
+            // funds back to the pool.
+            package.status = PackageStatus::Expired;
+            env.storage().persistent().set(&pkg_key, &package);
+
+            Self::decrement_locked(&env, &package.token, package.amount);
+
+            PackageSwept {
+                package_id: pkg_id,
+                recipient: package.recipient.clone(),
+                amount: package.amount,
+                actor: env.current_contract_address(),
+                timestamp: now,
+            }
+            .publish(&env);
+
+            swept_count += 1;
+        }
+
+        Ok(swept_count)
+    }
 }
 
 // --- Tests ---
@@ -2660,5 +2740,108 @@ mod tests {
             &Map::new(&env),
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn sweep_expired_packages_releases_locked_funds_in_bounded_batches() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        let (token, sac, _) = setup_token(&env, &admin);
+
+        env.mock_all_auths();
+        client.init(&admin);
+
+        sac.mint(&admin, &50_000_000);
+        client.fund(&token, &admin, &50_000_000);
+
+        let now = env.ledger().timestamp();
+        let metadata = Map::new(&env);
+
+        // Package 1 and 2 expire at now + 50; package 3 never expires.
+        client.create_package(
+            &admin,
+            &1,
+            &recipient,
+            &10_000_000,
+            &token,
+            &(now + 50),
+            &metadata,
+        );
+        client.create_package(
+            &admin,
+            &2,
+            &recipient,
+            &10_000_000,
+            &token,
+            &(now + 50),
+            &metadata,
+        );
+        client.create_package(&admin, &3, &recipient, &10_000_000, &token, &0, &metadata);
+
+        // All three packages are locked before the sweep.
+        assert_eq!(client.get_total_locked(&token), 30_000_000);
+
+        // Advance past the expiry of packages 1 and 2.
+        env.ledger().with_mut(|li| li.timestamp = now + 51);
+
+        // Sweep in a bounded batch of 1.
+        let swept1 = client.sweep_expired_packages(&1);
+        assert_eq!(swept1, 1);
+        assert_eq!(client.get_total_locked(&token), 20_000_000);
+        assert_eq!(client.get_package(&1).status, PackageStatus::Expired);
+
+        // Sweep the remaining expired package.
+        let swept2 = client.sweep_expired_packages(&10);
+        assert_eq!(swept2, 1);
+        assert_eq!(client.get_total_locked(&token), 10_000_000);
+        assert_eq!(client.get_package(&2).status, PackageStatus::Expired);
+
+        // Idempotent: nothing left to sweep.
+        assert_eq!(client.sweep_expired_packages(&10), 0);
+        assert_eq!(client.get_total_locked(&token), 10_000_000);
+
+        // The never-expiring package is untouched and still locked.
+        assert_eq!(client.get_package(&3).status, PackageStatus::Created);
+        assert_eq!(client.get_total_locked(&token), 10_000_000);
+    }
+
+    #[test]
+    fn sweep_expired_packages_skips_packages_at_exact_expiry_boundary() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        let (token, sac, _) = setup_token(&env, &admin);
+
+        env.mock_all_auths();
+        client.init(&admin);
+
+        sac.mint(&admin, &20_000_000);
+        client.fund(&token, &admin, &20_000_000);
+
+        let now = env.ledger().timestamp();
+        let metadata = Map::new(&env);
+        client.create_package(
+            &admin,
+            &1,
+            &recipient,
+            &10_000_000,
+            &token,
+            &(now + 50),
+            &metadata,
+        );
+
+        // At the exact expiry boundary the package is still claimable, so the
+        // sweep must not touch it yet.
+        env.ledger().with_mut(|li| li.timestamp = now + 50);
+        assert_eq!(client.sweep_expired_packages(&10), 0);
+        assert_eq!(client.get_package(&1).status, PackageStatus::Created);
+        assert_eq!(client.get_total_locked(&token), 10_000_000);
+
+        // One second later it is expired and swept.
+        env.ledger().with_mut(|li| li.timestamp = now + 51);
+        assert_eq!(client.sweep_expired_packages(&10), 1);
+        assert_eq!(client.get_package(&1).status, PackageStatus::Expired);
+        assert_eq!(client.get_total_locked(&token), 0);
     }
 }
