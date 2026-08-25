@@ -494,6 +494,9 @@ model ApiKey {
   replacedFrom ApiKey[] @relation("ApiKeyReplacement")
   /// Optional absolute expiry. Null means no scheduled expiry.
   expiresAt     DateTime?
+  /// While set and in the future, a rotated-out predecessor key remains
+  /// valid alongside its replacement (rotation overlap window).
+  graceExpiresAt DateTime?
   /// Last time an expiry/rotation reminder was surfaced for this key.
   lastRemindedAt DateTime?
 
@@ -502,6 +505,7 @@ model ApiKey {
   @@index([revokedAt])
   @@index([lastUsedAt])
   @@index([expiresAt])
+  @@index([graceExpiresAt])
 }
 
 model InternalNote {
