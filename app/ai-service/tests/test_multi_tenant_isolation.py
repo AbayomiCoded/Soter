@@ -77,9 +77,7 @@ def artifacts_env(tmp_path):
     # Repoint the shared module-level service used by the artifacts router
     # (same pattern as tests/test_artifact_access.py).
     original_dir = artifacts_module.artifact_access_service.artifacts_dir
-    artifacts_module.artifact_access_service.artifacts_dir = str(
-        artifact_dir.resolve()
-    )
+    artifacts_module.artifact_access_service.artifacts_dir = str(artifact_dir.resolve())
     yield {
         "dir": artifact_dir,
         "service": artifacts_module.artifact_access_service,
@@ -127,9 +125,7 @@ def client(artifacts_env, tmp_path):
     app.add_exception_handler(StarletteHTTPException, _http_exception_handler)
 
     # Real access-control stack sharing the repointed artifacts directory.
-    app.state.artifact_access_control = EvidenceAccessControl(
-        artifacts_env["service"]
-    )
+    app.state.artifact_access_control = EvidenceAccessControl(artifacts_env["service"])
     app.state.humanitarian_verification_service = Mock()
     app.state.humanitarian_verification_service.verify_claim = Mock(
         return_value={
@@ -221,9 +217,7 @@ class TestDirectArtifactAccessIsolation:
         self, client, spoofed_org, artifacts_env
     ):
         """Case/whitespace tricks must never satisfy ownership checks."""
-        response = self._access(
-            client, "bravo-evidence.bin", org=spoofed_org
-        )
+        response = self._access(client, "bravo-evidence.bin", org=spoofed_org)
         assert response.status_code == 404
 
     @pytest.mark.parametrize(
@@ -236,13 +230,12 @@ class TestDirectArtifactAccessIsolation:
             "....//bravo-evidence.bin",
         ],
     )
-    def test_path_traversal_cannot_reach_other_tenant_files(
-        self, client, traversal_id
-    ):
+    def test_path_traversal_cannot_reach_other_tenant_files(self, client, traversal_id):
         response = self._access(client, traversal_id, org=ORG_A)
-        assert response.status_code in (403, 404), (
-            "traversal attempt must never serve another tenant's file"
-        )
+        assert response.status_code in (
+            403,
+            404,
+        ), "traversal attempt must never serve another tenant's file"
 
     def test_missing_headers_fail_closed_for_foreign_artifact(self, client):
         for drop in ("X-Org-Id", "X-User-Id", "X-User-Role"):
@@ -253,9 +246,9 @@ class TestDirectArtifactAccessIsolation:
                 headers=headers,
                 json={"mode": "proxy"},
             )
-            assert response.status_code == 400, (
-                f"{drop} must be required when artifact ids are referenced"
-            )
+            assert (
+                response.status_code == 400
+            ), f"{drop} must be required when artifact ids are referenced"
 
     def test_invalid_role_cannot_read_foreign_artifact(self, client):
         response = self._access(client, "bravo-evidence.bin", role="superadmin")
@@ -296,9 +289,7 @@ class TestSignedTokenDownloadIsolation:
         assert unknown.status_code == 404
         assert unknown.content == response.content
 
-    def test_token_rebinding_artifact_id_is_rejected(
-        self, client, artifacts_env
-    ):
+    def test_token_rebinding_artifact_id_is_rejected(self, client, artifacts_env):
         """Re-signing an attacker-chosen payload pointing Org B's token at Org
         A's artifact requires the signing secret; verify tampered payloads are
         rejected rather than trusted."""
@@ -327,9 +318,7 @@ class TestSignedTokenDownloadIsolation:
         assert response.status_code == 403
         assert response.json()["error"]["code"] == "invalid_token_signature"
 
-    def test_cross_org_token_never_leaks_file_contents(
-        self, client, artifacts_env
-    ):
+    def test_cross_org_token_never_leaks_file_contents(self, client, artifacts_env):
         service = artifacts_env["service"]
         forged = service.create_signed_token("bravo-evidence.bin", ORG_A, "user-a")
         response = client.get(f"/v1/ai/verification-artifacts/download?token={forged}")
@@ -540,9 +529,7 @@ class TestCacheKeyTenantScope:
             tag_seg = ""
             if tags:
                 parts = sorted(
-                    f"{n}={v}"
-                    for n, v in tags.items()
-                    if v not in (None, "")
+                    f"{n}={v}" for n, v in tags.items() if v not in (None, "")
                 )
                 if parts:
                     tag_seg = ":" + ":".join(parts)
@@ -617,9 +604,9 @@ class TestCacheKeyTenantScope:
                 )
 
         assert mock_cache.get.call_count >= 2
-        assert mock_cache.set.call_count == 1, (
-            "repeat request by same tenant should hit its own scoped entry"
-        )
+        assert (
+            mock_cache.set.call_count == 1
+        ), "repeat request by same tenant should hit its own scoped entry"
 
 
 # ---------------------------------------------------------------------------
@@ -628,9 +615,7 @@ class TestCacheKeyTenantScope:
 
 
 class TestInvalidateCacheEndpointIsolation:
-    def test_reviewer_cannot_trigger_invalidation_for_foreign_artifact(
-        self, client
-    ):
+    def test_reviewer_cannot_trigger_invalidation_for_foreign_artifact(self, client):
         response = client.post(
             "/v1/ai/verification-artifacts/bravo-evidence.bin/invalidate-cache",
             headers={"X-User-Role": "reviewer"},
