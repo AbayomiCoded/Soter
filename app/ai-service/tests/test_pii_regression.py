@@ -103,10 +103,11 @@ class TestPIIRegressionComplete:
         if "should_contain" in fixture and fixture.get("should_contain"):
             # This test documents gaps: if it fails, the pattern is missing
             if fixture["should_contain"] not in anonymized:
-                pytest.skip(
-                    f"Pattern not yet implemented for {fixture['name']}: "
+                skip_msg = (
+                    f"Pattern missing for {fixture['name']}: "
                     f"{fixture['original_text']}"
                 )
+                pytest.skip(skip_msg)
             else:
                 msg = f"Expected {fixture['should_contain']} in {fixture['name']}"
                 assert fixture["should_contain"] in anonymized, msg

@@ -125,10 +125,8 @@ class PIIScrubberBenchmark:
             # Check minimum redaction count
             if total_redacted < min_count:
                 passed = False
-                failures.append(
-                    f"Expected at least {min_count} redactions, "
-                    f"got {total_redacted}"
-                )
+                msg = f"Expected {min_count} redactions, got {total_redacted}"
+                failures.append(msg)
 
             if passed:
                 self.metrics["true_positives"] += 1
