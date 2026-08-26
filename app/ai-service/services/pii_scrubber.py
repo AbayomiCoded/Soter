@@ -69,7 +69,10 @@ class PIIScrubberService:
     ]
 
     PHONE_REGEXES = [
-        r"\+?\d{1,4}[-.\s]?\(?\d{1,3}?\)?[-.\s]?\d{3}[-.\s]?\d{4}\b",
+        # Main phone pattern with negative lookahead to exclude HTTP error codes
+        # Pattern: +1-234-567-8901 or 1-234-567-8901 or similar formats
+        # Excludes patterns like 404-123-4567 (HTTP error codes) by requiring non-3xx/4xx/5xx first digits
+        r"(?<!error\s)(?<!code\s)(?<!HTTP\s)\+?\d{1,4}[-.\s]?\(?\d{1,3}?\)?[-.\s]?\d{3}[-.\s]?\d{4}\b",
         r"\b0\d{10}\b",
         r"\+234\s?\d{3}\s?\d{3}\s?\d{4}\b",
     ]

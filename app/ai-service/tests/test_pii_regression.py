@@ -32,7 +32,7 @@ class TestPIIRegressionComplete:
 
     @pytest.mark.parametrize("fixture", PII_FIXTURES)
     def test_pii_detection_coverage(self, fixture):
-        """Test that various types of PII are detected and replaced with correct tokens.
+        """Test that various types of PII are detected and replaced with tokens.
 
         TRUE POSITIVE TEST: PII should be detected and scrubbed.
         """
@@ -43,14 +43,20 @@ class TestPIIRegressionComplete:
         for token in fixture["expected_tokens"]:
             assert (
                 token in anonymized
-            ), f"Token {token} missing in anonymized text for fixture '{fixture['name']}'"
+            ), (
+                f"Token {token} missing in anonymized text for fixture "
+                f"'{fixture['name']}'"
+            )
 
         # Verify minimum redaction count if specified
         if "min_count" in fixture:
             total_redacted = sum(result["token_counts"].values())
             assert (
                 total_redacted >= fixture["min_count"]
-            ), f"Expected at least {fixture['min_count']} redactions for '{fixture['name']}', got {total_redacted}"
+            ), (
+                f"Expected at least {fixture['min_count']} redactions for "
+                f"'{fixture['name']}', got {total_redacted}"
+            )
 
     # ==================== TRUE NEGATIVES ====================
     # Tests that safe text is not over-scrubbed
@@ -80,7 +86,7 @@ class TestPIIRegressionComplete:
 
     @pytest.mark.parametrize("guard", FALSE_POSITIVE_GUARDS)
     def test_false_positive_guards(self, guard):
-        """Specifically guard against known false positives.
+        """Guard against known false positives.
 
         FALSE POSITIVE PREVENTION TEST: Legitimate patterns should NOT be scrubbed
         even if they resemble PII (e.g., version numbers, port numbers, colors).
@@ -90,7 +96,10 @@ class TestPIIRegressionComplete:
 
         assert (
             guard["should_not_redact"] in anonymized
-        ), f"False positive redaction of '{guard['should_not_redact']}' detected in '{guard['name']}'"
+        ), (
+            f"False positive redaction of '{guard['should_not_redact']}' "
+            f"detected in '{guard['name']}'"
+        )
 
     # ==================== FALSE NEGATIVE DETECTION ====================
     # Tests to identify gaps in current pattern coverage
@@ -110,10 +119,11 @@ class TestPIIRegressionComplete:
 
         # Check if expected token is present (if specified)
         if "should_contain" in fixture and fixture.get("should_contain"):
-            # This test documents gaps: if it fails, the pattern is missing coverage
+            # This test documents gaps: if it fails, the pattern is missing
             if fixture["should_contain"] not in anonymized:
                 pytest.skip(
-                    f"Pattern not yet implemented for {fixture['name']}: {fixture['original_text']}"
+                    f"Pattern not yet implemented for {fixture['name']}: "
+                    f"{fixture['original_text']}"
                 )
             else:
                 assert (
@@ -155,7 +165,10 @@ class TestPIIRegressionEdgeCases:
 
     def test_multiple_pii_types_in_one_text(self):
         """Text with multiple PII types should detect all of them."""
-        text = "Contact Dr. John Smith at john@example.com or +234 801 234 5678 or visit Lagos office on 2024-06-15"
+        text = (
+            "Contact Dr. John Smith at john@example.com or +234 801 234 5678 "
+            "or visit Lagos office on 2024-06-15"
+        )
         result = self.service.anonymize(text)
 
         # Should have multiple types of redactions
@@ -186,7 +199,10 @@ class TestPIIRegressionEdgeCases:
         assert result["pii_summary"]["total"] >= 1
         redacted_text = result["anonymized_text"]
         # Count tokens - should not have excessive duplicates
-        assert "Dr. John Smith" not in redacted_text or "[RECIPIENT_NAME]" in redacted_text
+        assert (
+            "Dr. John Smith" not in redacted_text
+            or "[RECIPIENT_NAME]" in redacted_text
+        )
 
     def test_repeated_pii(self):
         """Same PII appearing multiple times should be counted correctly."""
@@ -206,7 +222,9 @@ class TestPIIRegressionEdgeCases:
 
         for text in texts:
             result = self.service.anonymize(text)
-            assert "[EMAIL_ADDRESS]" in result["anonymized_text"], f"Failed for: {text}"
+            assert "[EMAIL_ADDRESS]" in result["anonymized_text"], (
+                f"Failed for: {text}"
+            )
 
     def test_redacted_token_format(self):
         """All tokens should follow the expected [CATEGORY] format."""
@@ -239,7 +257,7 @@ class TestPIIRegressionIntegration:
         Location: Kano, Nigeria
         Contact: alice.johnson@ngo.org or +234 803 456 7890
         National ID: 12345678901
-        
+
         Status: Assistance provided successfully.
         """
 
@@ -247,9 +265,16 @@ class TestPIIRegressionIntegration:
         anonymized = result["anonymized_text"]
 
         # All PII should be redacted
-        assert "Alice Johnson" not in anonymized or "[RECIPIENT_NAME]" in anonymized
-        assert "15 January 2024" not in anonymized or "[EVENT_DATE]" in anonymized
-        assert "alice.johnson@ngo.org" not in anonymized or "[EMAIL_ADDRESS]" in anonymized
+        assert (
+            "Alice Johnson" not in anonymized or "[RECIPIENT_NAME]" in anonymized
+        )
+        assert (
+            "15 January 2024" not in anonymized or "[EVENT_DATE]" in anonymized
+        )
+        assert (
+            "alice.johnson@ngo.org" not in anonymized
+            or "[EMAIL_ADDRESS]" in anonymized
+        )
 
         # Non-PII should be preserved
         assert "Status: Assistance provided successfully" in anonymized
@@ -266,7 +291,10 @@ class TestPIIRegressionIntegration:
 
     def test_multiple_emails_with_context(self):
         """Multiple emails in text should be detected with proper context."""
-        text = "Send updates to team@company.org and support@company.org for processing"
+        text = (
+            "Send updates to team@company.org and support@company.org "
+            "for processing"
+        )
         result = self.service.anonymize(text)
 
         # Context should be preserved
