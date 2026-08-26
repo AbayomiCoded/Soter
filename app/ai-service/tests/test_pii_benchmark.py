@@ -356,9 +356,7 @@ class TestPIIScrubberBenchmark:
     def test_benchmark_precision_meets_minimum(self):
         """Ensure precision >= 0.85 (acceptable false positive rate)."""
         precision = self.metrics["precision"]
-        assert (
-            precision >= PIIScrubberBenchmark.MIN_PRECISION
-        ), (
+        assert precision >= PIIScrubberBenchmark.MIN_PRECISION, (
             f"Precision {precision} below minimum "
             f"{PIIScrubberBenchmark.MIN_PRECISION}"
         )
@@ -366,9 +364,7 @@ class TestPIIScrubberBenchmark:
     def test_benchmark_recall_meets_minimum(self):
         """Ensure recall >= 0.65 (acceptable false negative rate)."""
         recall = self.metrics["recall"]
-        assert (
-            recall >= PIIScrubberBenchmark.MIN_RECALL
-        ), (
+        assert recall >= PIIScrubberBenchmark.MIN_RECALL, (
             f"Recall {recall} below minimum "
             f"{PIIScrubberBenchmark.MIN_RECALL}"
         )
@@ -376,9 +372,7 @@ class TestPIIScrubberBenchmark:
     def test_benchmark_f1_meets_minimum(self):
         """Ensure F1 score >= 0.72 (balanced performance)."""
         f1 = self.metrics["f1_score"]
-        assert (
-            f1 >= PIIScrubberBenchmark.MIN_F1
-        ), (
+        assert f1 >= PIIScrubberBenchmark.MIN_F1, (
             f"F1 score {f1} below minimum "
             f"{PIIScrubberBenchmark.MIN_F1}"
         )
