@@ -358,48 +358,42 @@ class TestPIIScrubberBenchmark:
         precision = self.metrics["precision"]
         assert (
             precision >= PIIScrubberBenchmark.MIN_PRECISION
-        ), f"Precision {precision} below minimum {PIIScrubberBenchmark.MIN_PRECISION}"
+        ), f"Precision {precision} below {PIIScrubberBenchmark.MIN_PRECISION}"
 
     def test_benchmark_recall_meets_minimum(self):
         """Ensure recall >= 0.65 (acceptable false negative rate)."""
         recall = self.metrics["recall"]
         assert (
             recall >= PIIScrubberBenchmark.MIN_RECALL
-        ), f"Recall {recall} below minimum {PIIScrubberBenchmark.MIN_RECALL}"
+        ), f"Recall {recall} below {PIIScrubberBenchmark.MIN_RECALL}"
 
     def test_benchmark_f1_meets_minimum(self):
         """Ensure F1 score >= 0.72 (balanced performance)."""
         f1 = self.metrics["f1_score"]
         assert (
             f1 >= PIIScrubberBenchmark.MIN_F1
-        ), f"F1 score {f1} below minimum {PIIScrubberBenchmark.MIN_F1}"
+        ), f"F1 {f1} below {PIIScrubberBenchmark.MIN_F1}"
 
     def test_true_positives_fully_detected(self):
         """All true positive fixtures should be detected."""
         fp_details = self.metrics["fixture_breakdown"]["true_positives"]["details"]
         failed = [d for d in fp_details if not d["passed"]]
 
-        assert (
-            len(failed) == 0
-        ), f"True positive detection failed for: {[f['name'] for f in failed]}"
+        assert len(failed) == 0, f"True positive detection failed: {len(failed)} failures"
 
     def test_true_negatives_fully_preserved(self):
         """All true negative fixtures should NOT be scrubbed."""
         tn_details = self.metrics["fixture_breakdown"]["true_negatives"]["details"]
         failed = [d for d in tn_details if not d["passed"]]
 
-        assert (
-            len(failed) == 0
-        ), f"True negative preservation failed for: {[f['name'] for f in failed]}"
+        assert len(failed) == 0, f"True negative preservation failed: {len(failed)} failures"
 
     def test_false_positive_guards_all_pass(self):
         """All false positive guards should prevent over-scrubbing."""
         fp_guards = self.metrics["fixture_breakdown"]["false_positives"]["details"]
         failed = [d for d in fp_guards if not d["passed"]]
 
-        assert (
-            len(failed) == 0
-        ), f"False positive guards failed for: {[f['name'] for f in failed]}"
+        assert len(failed) == 0, f"False positive guards failed: {len(failed)} failures"
 
     def test_benchmark_is_deterministic(self):
         """Verify benchmark results are identical across runs.
@@ -448,9 +442,7 @@ class TestPIIScrubberBenchmark:
         ]
 
         for field in required_fields:
-            assert (
-                field in self.metrics
-            ), f"Required field '{field}' missing from benchmark results"
+            assert field in self.metrics, f"Missing field '{field}' in benchmark results"
 
 
 # Fixture for access to benchmark outside of test class

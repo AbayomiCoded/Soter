@@ -41,16 +41,12 @@ class TestPIIRegressionComplete:
 
         # Verify expected tokens are present
         for token in fixture["expected_tokens"]:
-            assert (
-                token in anonymized
-            ), f"Token {token} missing in anonymized text for fixture '{fixture['name']}'"
+            assert token in anonymized, f"Missing token {token} in fixture {fixture['name']}"
 
         # Verify minimum redaction count if specified
         if "min_count" in fixture:
             total_redacted = sum(result["token_counts"].values())
-            assert (
-                total_redacted >= fixture["min_count"]
-            ), f"Expected at least {fixture['min_count']} redactions for '{fixture['name']}', got {total_redacted}"
+            assert total_redacted >= fixture["min_count"], f"Fixture {fixture['name']}: expected {fixture['min_count']} redactions, got {total_redacted}"
 
     # ==================== TRUE NEGATIVES ====================
     # Tests that safe text is not over-scrubbed
@@ -65,15 +61,11 @@ class TestPIIRegressionComplete:
         anonymized = result["anonymized_text"]
 
         # Text should remain unchanged
-        assert (
-            anonymized == fixture["text"]
-        ), f"Safe text was modified in fixture '{fixture['name']}'"
+        assert anonymized == fixture["text"], f"Safe text modified in fixture {fixture['name']}"
 
         # Verify forbidden tokens do not appear
         for token in fixture["should_not_contain"]:
-            assert (
-                token not in anonymized
-            ), f"False positive: {token} found in fixture '{fixture['name']}'"
+            assert token not in anonymized, f"False positive {token} in fixture {fixture['name']}"
 
     # ==================== FALSE POSITIVE GUARDS ====================
     # Tests that legitimate patterns that look like PII are preserved
@@ -88,9 +80,7 @@ class TestPIIRegressionComplete:
         result = self.service.anonymize(guard["text"])
         anonymized = result["anonymized_text"]
 
-        assert (
-            guard["should_not_redact"] in anonymized
-        ), f"False positive redaction of '{guard['should_not_redact']}' detected in '{guard['name']}'"
+        assert guard["should_not_redact"] in anonymized, f"False positive in {guard['name']}: {guard['should_not_redact']}"
 
     # ==================== FALSE NEGATIVE DETECTION ====================
     # Tests to identify gaps in current pattern coverage
@@ -117,14 +107,10 @@ class TestPIIRegressionComplete:
                     f"{fixture['original_text']}"
                 )
             else:
-                assert (
-                    fixture["should_contain"] in anonymized
-                ), f"Expected {fixture['should_contain']} for {fixture['name']}"
+                assert fixture["should_contain"] in anonymized, f"Expected {fixture['should_contain']} in {fixture['name']}"
 
         # At minimum, something should be redacted for real PII
-        assert (
-            total_redacted > 0 or fixture.get("should_contain") is None
-        ), f"No redaction detected for {fixture['name']}"
+        assert total_redacted > 0 or fixture.get("should_contain") is None, f"No redaction in {fixture['name']}"
 
 
 class TestPIIRegressionEdgeCases:
@@ -166,9 +152,8 @@ class TestPIIRegressionEdgeCases:
         assert result["pii_summary"]["total"] > 1
         # Should have detected at least names and contacts (email or phone)
         assert (
-            result["pii_summary"]["names"] > 0
-            or result["pii_summary"]["emails"] > 0
-        )
+            result["pii_summary"]["names"] > 0 or result["pii_summary"]["emails"] > 0
+        ), "No PII detected"
 
     def test_pii_at_text_boundaries(self):
         """PII at start, middle, and end of text should be detected."""
@@ -191,9 +176,8 @@ class TestPIIRegressionEdgeCases:
         redacted_text = result["anonymized_text"]
         # Count tokens - should not have excessive duplicates
         assert (
-            "Dr. John Smith" not in redacted_text
-            or "[RECIPIENT_NAME]" in redacted_text
-        )
+            "Dr. John Smith" not in redacted_text or "[RECIPIENT_NAME]" in redacted_text
+        ), "Name not properly redacted"
 
     def test_repeated_pii(self):
         """Same PII appearing multiple times should be counted correctly."""
@@ -257,16 +241,11 @@ class TestPIIRegressionIntegration:
         anonymized = result["anonymized_text"]
 
         # All PII should be redacted
+        assert "Alice Johnson" not in anonymized or "[RECIPIENT_NAME]" in anonymized, "Name not redacted"
+        assert "15 January 2024" not in anonymized or "[EVENT_DATE]" in anonymized, "Date not redacted"
         assert (
-            "Alice Johnson" not in anonymized or "[RECIPIENT_NAME]" in anonymized
-        )
-        assert (
-            "15 January 2024" not in anonymized or "[EVENT_DATE]" in anonymized
-        )
-        assert (
-            "alice.johnson@ngo.org" not in anonymized
-            or "[EMAIL_ADDRESS]" in anonymized
-        )
+            "alice.johnson@ngo.org" not in anonymized or "[EMAIL_ADDRESS]" in anonymized
+        ), "Email not redacted"
 
         # Non-PII should be preserved
         assert "Status: Assistance provided successfully" in anonymized
