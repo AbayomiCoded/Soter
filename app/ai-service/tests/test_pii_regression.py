@@ -73,13 +73,18 @@ class TestPIIRegressionComplete:
         # Text should remain unchanged
         assert (
             anonymized == fixture["text"]
-        ), f"Safe text was modified in fixture '{fixture['name']}'"
+        ), (
+            f"Safe text was modified in fixture '{fixture['name']}'"
+        )
 
         # Verify forbidden tokens do not appear
         for token in fixture["should_not_contain"]:
             assert (
                 token not in anonymized
-            ), f"False positive: {token} found in fixture '{fixture['name']}'"
+            ), (
+                f"False positive: {token} found in fixture "
+                f"'{fixture['name']}'"
+            )
 
     # ==================== FALSE POSITIVE GUARDS ====================
     # Tests that legitimate patterns that look like PII are preserved

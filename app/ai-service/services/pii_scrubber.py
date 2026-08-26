@@ -210,13 +210,25 @@ class PIIScrubberService:
         spans: List[PIISpan] = []
 
         # Check for emails FIRST to prioritize them over names
-        # This prevents "John@Example.Com" from being split into "John" (PERSON) + email
+        # This prevents "John@Example.Com" from being split into "John" + email
+        email_spans = []
         for pattern in self.EMAIL_REGEXES:
-            spans.extend(self._spans_from_regex(text, pattern, "EMAIL"))
+            email_spans.extend(self._spans_from_regex(text, pattern, "EMAIL"))
+        spans.extend(email_spans)
+
+        # Build set of email character ranges to exclude from spacy processing
+        email_ranges = {(span.start, span.end) for span in email_spans}
 
         doc = self.nlp(text)
 
         for ent in doc.ents:
+            # Skip if this entity overlaps with an email
+            if any(
+                not (ent.end_char <= start or ent.start_char >= end)
+                for start, end in email_ranges
+            ):
+                continue
+
             mapped = self._normalize_label(ent.label_)
             if mapped:
                 spans.append(
