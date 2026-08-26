@@ -43,6 +43,21 @@ def mock_healthy_resources():
         yield
 
 
+@pytest.fixture(autouse=True)
+def reset_app_state():
+    """Ensure app.state is clean for each test.
+
+    The Starlette TestClient manages the ASGI lifespan lifecycle.  When a
+    previous module's TestClient is torn down the lifespan shutdown sets
+    ``app.state.is_shutting_down = True``.  Since ``app`` is a
+    module-level singleton, that stale value leaks into subsequent test
+    modules and causes every throttled endpoint to return 503.
+    """
+    app.state.is_shutting_down = False
+    app.state.active_requests = 0
+    yield
+
+
 # ---------------------------------------------------------------------------
 # Clients
 # ---------------------------------------------------------------------------
