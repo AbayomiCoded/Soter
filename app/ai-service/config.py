@@ -7,9 +7,9 @@ import logging
 import os
 import re
 import secrets
-from typing import Literal, Optional
+from typing import Dict, Literal, Optional
 
-from pydantic import model_validator, HttpUrl
+from pydantic import Field, HttpUrl, model_validator
 from pydantic_core import PydanticUndefined
 from pydantic_settings import BaseSettings, SettingsConfigDict
 

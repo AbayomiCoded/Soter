@@ -103,6 +103,12 @@ def check_system_resources(memory_threshold_percent: float = 90.0) -> bool:
     return True
 
 
+def record_rate_limit_exceeded(endpoint: str, method: str) -> None:
+    """Record a rejected rate limit request."""
+    RATE_LIMIT_EXCEEDED_TOTAL.labels(endpoint=endpoint, method=method).inc()
+    REQUEST_COUNT.labels(method=method, endpoint=endpoint, http_status=429).inc()
+
+
 # Cache stampede prevention metrics
 SINGLE_FLIGHT_SUPPRESSED = Counter(
     "cache_single_flight_suppressed_total",

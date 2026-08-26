@@ -30,8 +30,9 @@ def reset_limiter():
 @pytest.fixture(autouse=True)
 def mock_tasks():
     """Mock tasks.create_task to avoid needing Redis/Celery broker in rate limit tests."""
-    with patch("tasks.create_task", return_value="test-task-123"), \
-         patch("metrics.check_system_resources", return_value=True):
+    with patch("tasks.create_task", return_value="test-task-123"), patch(
+        "metrics.check_system_resources", return_value=True
+    ):
         yield
 
 
@@ -119,17 +120,11 @@ def test_per_endpoint_overrides(client, monkeypatch):
     headers = {"X-API-Key": "caller-gamma"}
 
     # /v1/ai/inference has limit 2/minute
-    res1 = client.post(
-        "/v1/ai/inference", json={"type": "inference"}, headers=headers
-    )
+    res1 = client.post("/v1/ai/inference", json={"type": "inference"}, headers=headers)
     assert res1.status_code == 200
-    res2 = client.post(
-        "/v1/ai/inference", json={"type": "inference"}, headers=headers
-    )
+    res2 = client.post("/v1/ai/inference", json={"type": "inference"}, headers=headers)
     assert res2.status_code == 200
-    res3 = client.post(
-        "/v1/ai/inference", json={"type": "inference"}, headers=headers
-    )
+    res3 = client.post("/v1/ai/inference", json={"type": "inference"}, headers=headers)
     assert res3.status_code == 429
     assert res3.headers.get("X-RateLimit-Limit") == "2"
 
@@ -163,9 +158,7 @@ def test_interaction_with_load_shedder_composition(client, monkeypatch):
     assert res_bad.json()["error"]["code"] == "RATE_LIMIT_EXCEEDED"
 
     # Now simulate load shedding condition (memory overload)
-    with patch(
-        "services.load_shedder.check_memory_pressure", return_value="memory"
-    ):
+    with patch("services.load_shedder.check_memory_pressure", return_value="memory"):
         # Abusive client still gets 429 (rate limiter stops it first)
         res_bad_again = client.post(
             "/v1/ai/inference", json=payload, headers=headers_bad

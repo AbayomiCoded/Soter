@@ -76,6 +76,25 @@ if "cv2" in sys.modules and isinstance(sys.modules["cv2"], MagicMock):
 # Patch metrics.check_system_resources so the monitor_requests middleware
 # doesn't crash when torch (vram) is a MagicMock.
 import metrics
+import pytest
 
 metrics.check_system_resources = lambda **kwargs: True
 
+
+@pytest.fixture(autouse=True)
+def reset_app_state():
+    try:
+        import main
+
+        main.app.state.is_shutting_down = False
+        main.app.state.active_requests = 0
+    except Exception:
+        pass
+    yield
+    try:
+        import main
+
+        main.app.state.is_shutting_down = False
+        main.app.state.active_requests = 0
+    except Exception:
+        pass

@@ -5,7 +5,23 @@ Tests for cache stampede prevention (single-flight suppression)
 import pytest
 import asyncio
 from unittest.mock import Mock, patch
-from services.cache import cached_response
+from services.cache import (
+    cached_response,
+    _inflight_computations,
+    _inflight_results,
+    _inflight_errors,
+)
+
+
+@pytest.fixture(autouse=True)
+def reset_inflight():
+    _inflight_computations.clear()
+    _inflight_results.clear()
+    _inflight_errors.clear()
+    yield
+    _inflight_computations.clear()
+    _inflight_results.clear()
+    _inflight_errors.clear()
 
 
 class TestCacheStampedePrevention:
