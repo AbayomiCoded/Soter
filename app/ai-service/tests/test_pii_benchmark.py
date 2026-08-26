@@ -29,8 +29,7 @@ class PIIScrubberBenchmark:
     """Benchmark suite for PII scrubber with metrics calculation."""
 
     # Minimum acceptable performance thresholds for regression detection
-    # Current performance baseline
-    # (as of test/767-pii-scrubber-regression-benchmarks):
+    # Current performance baseline (as of test/767-pii-scrubber-regression-benchmarks):
     # - Precision: 0.8571 (85.71% of detected PII is actually PII)
     #   Reason: Some false positives like error codes, file paths match
     #   phone/ID patterns
@@ -39,22 +38,20 @@ class PIIScrubberBenchmark:
     #   international formats, accented names, ISO date formats, and IDs
     #   with spaces need improvement
     # - F1: 0.75 (weighted average of precision and recall)
-    #   Reason: Reflects tradeoff between false positives and false
-    #   negatives
+    #   Reason: Reflects tradeoff between false positives and false negatives
     #
     # These thresholds are conservative and prevent regressions while
-    # allowing incremental improvements. They reflect production
-    # constraints:
+    # allowing incremental improvements. They reflect production constraints:
     # - Privacy is critical: false negatives (missed PII) are acceptable
     #   if they mean fewer legitimate patterns are incorrectly flagged
     #   (false positives)
     # - Most real-world PII follows standard formats (basic emails,
     #   standard phone patterns)
-    # - Complex edge cases (accents, unusual separators) are lower
-    #   priority for MVP
+    # - Complex edge cases (accents, unusual separators) are lower priority
+    #   for MVP
     MIN_PRECISION = 0.85  # Acceptable false positive rate for MVP
-    MIN_RECALL = 0.65    # Acceptable false negative rate; edge cases later
-    MIN_F1 = 0.72        # Overall performance threshold both metrics
+    MIN_RECALL = 0.65  # Acceptable false negative rate; edge cases later
+    MIN_F1 = 0.72  # Overall performance threshold reflecting both metrics
 
     def __init__(self):
         self.service = PIIScrubberService()

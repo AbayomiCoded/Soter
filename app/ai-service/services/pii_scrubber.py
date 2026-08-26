@@ -44,7 +44,7 @@ class PIIScrubberService:
         "Water",
         "Clear",
         "Crystal",
-        "Coordinator",
+        "HTTP",  # HTTP error codes like 404-123-4567 should not match
     }
 
     DATE_REGEXES = [
@@ -69,10 +69,7 @@ class PIIScrubberService:
     ]
 
     PHONE_REGEXES = [
-        # Main phone pattern with negative lookahead to exclude HTTP error codes
-        # Pattern: +1-234-567-8901 or 1-234-567-8901 or similar formats
-        # Excludes patterns like 404-123-4567 (HTTP error codes) by requiring non-3xx/4xx/5xx first digits
-        r"(?<!error\s)(?<!code\s)(?<!HTTP\s)\+?\d{1,4}[-.\s]?\(?\d{1,3}?\)?[-.\s]?\d{3}[-.\s]?\d{4}\b",
+        r"\+?\d{1,4}[-.\s]?\(?\d{1,3}?\)?[-.\s]?\d{3}[-.\s]?\d{4}\b",
         r"\b0\d{10}\b",
         r"\+234\s?\d{3}\s?\d{3}\s?\d{4}\b",
     ]
@@ -210,8 +207,14 @@ class PIIScrubberService:
         return nlp
 
     def _detect_spans(self, text: str) -> List[PIISpan]:
-        doc = self.nlp(text)
         spans: List[PIISpan] = []
+
+        # Check for emails FIRST to prioritize them over names
+        # This prevents "John@Example.Com" from being split into "John" (PERSON) + email
+        for pattern in self.EMAIL_REGEXES:
+            spans.extend(self._spans_from_regex(text, pattern, "EMAIL"))
+
+        doc = self.nlp(text)
 
         for ent in doc.ents:
             mapped = self._normalize_label(ent.label_)
@@ -235,9 +238,6 @@ class PIIScrubberService:
             spans.extend(
                 self._spans_from_regex(text, pattern, "LOCATION")
             )  # Removed capture group 1 to get full address if regex 2 matches
-
-        for pattern in self.EMAIL_REGEXES:
-            spans.extend(self._spans_from_regex(text, pattern, "EMAIL"))
 
         for pattern in self.PHONE_REGEXES:
             spans.extend(self._spans_from_regex(text, pattern, "PHONE"))
@@ -267,6 +267,14 @@ class PIIScrubberService:
             else:
                 start, end = match.start(), match.end()
                 value = match.group(0)
+
+            # Skip phone numbers that are HTTP/error codes (preceded by "error" or "code")
+            if label == "PHONE":
+                # Check if preceded by "error code", "HTTP error", etc.
+                context_start = max(0, start - 20)
+                context = text[context_start:start].lower()
+                if "error" in context or "http" in context:
+                    continue
 
             spans.append(PIISpan(start=start, end=end, label=label, text=value))
         return spans
