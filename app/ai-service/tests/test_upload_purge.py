@@ -79,9 +79,7 @@ def test_purge_expired_artifacts_removes_old_files(tmp_path):
     service.save_chunk(session.session_id, "user-1", 0, b"aa")
     finalized = service.finalize(session.session_id, "user-1")
 
-    artifact_path = os.path.join(
-        service.storage_dir, f"{finalized.artifact_id}_e.png"
-    )
+    artifact_path = os.path.join(service.storage_dir, f"{finalized.artifact_id}_e.png")
     old_time = time.time() - 1000
     os.utime(artifact_path, (old_time, old_time))
 
@@ -98,9 +96,7 @@ def test_purge_expired_artifacts_skips_fresh_files(tmp_path):
     service.save_chunk(session.session_id, "user-1", 0, b"aa")
     finalized = service.finalize(session.session_id, "user-1")
 
-    artifact_path = os.path.join(
-        service.storage_dir, f"{finalized.artifact_id}_e.png"
-    )
+    artifact_path = os.path.join(service.storage_dir, f"{finalized.artifact_id}_e.png")
 
     result = service.purge_expired_artifacts(retention_seconds=100)
 
@@ -135,7 +131,5 @@ def test_purge_expired_artifacts_respects_batch_size(tmp_path):
     result = service.purge_expired_artifacts(retention_seconds=100, batch_size=2)
 
     assert result.items_purged == 2
-    remaining = [
-        name for name in os.listdir(service.storage_dir) if name != "sessions"
-    ]
+    remaining = [name for name in os.listdir(service.storage_dir) if name != "sessions"]
     assert len(remaining) == 3
