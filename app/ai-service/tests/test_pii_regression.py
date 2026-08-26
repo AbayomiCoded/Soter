@@ -16,11 +16,15 @@ from tests.pii_fixtures import (
     SAFE_TEXT_FIXTURES,
     FALSE_POSITIVE_GUARDS,
     FALSE_NEGATIVE_FIXTURES,
-)
+)  # noqa: E401
 
 
 class TestPIIRegressionComplete:
-    """Comprehensive regression test suite for PII scrubber with all fixture categories."""
+    """Comprehensive regression test suite for PII scrubber.
+
+    Tests all fixture categories: true positives, true negatives,
+    false positives, and false negatives.
+    """
 
     @pytest.fixture(autouse=True)
     def setup_service(self):
@@ -41,7 +45,8 @@ class TestPIIRegressionComplete:
 
         # Verify expected tokens are present
         for token in fixture["expected_tokens"]:
-            assert token in anonymized, f"Missing {token} in {fixture['name']}"
+            msg = f"Missing {token} in {fixture['name']}"
+            assert token in anonymized, msg
 
         # Verify minimum redaction count if specified
         if "min_count" in fixture:
@@ -62,11 +67,13 @@ class TestPIIRegressionComplete:
         anonymized = result["anonymized_text"]
 
         # Text should remain unchanged
-        assert anonymized == fixture["text"], f"Text modified: {fixture['name']}"
+        msg = f"Text modified: {fixture['name']}"
+        assert anonymized == fixture["text"], msg
 
         # Verify forbidden tokens do not appear
         for token in fixture["should_not_contain"]:
-            assert token not in anonymized, f"False positive {token}: {fixture['name']}"
+            msg = f"False positive {token}: {fixture['name']}"
+            assert token not in anonymized, msg
 
     # ==================== FALSE POSITIVE GUARDS ====================
     # Tests that legitimate patterns that look like PII are preserved
@@ -81,7 +88,9 @@ class TestPIIRegressionComplete:
         result = self.service.anonymize(guard["text"])
         anonymized = result["anonymized_text"]
 
-        assert guard["should_not_redact"] in anonymized, f"False positive: {guard['name']}"
+        assert (
+            guard["should_not_redact"] in anonymized
+        ), f"False positive: {guard['name']}"
 
     # ==================== FALSE NEGATIVE DETECTION ====================
     # Tests to identify gaps in current pattern coverage
@@ -113,10 +122,9 @@ class TestPIIRegressionComplete:
                 assert fixture["should_contain"] in anonymized, msg
 
         # At minimum, something should be redacted for real PII
-        should_redact = (
-            total_redacted > 0 or fixture.get("should_contain") is None
-        )
-        assert should_redact, f"No redaction: {fixture['name']}"
+        should_redact = total_redacted > 0 or fixture.get("should_contain") is None
+        msg = f"No redaction: {fixture['name']}"
+        assert should_redact, msg
 
 
 class TestPIIRegressionEdgeCases:
@@ -206,9 +214,7 @@ class TestPIIRegressionEdgeCases:
 
         for text in texts:
             result = self.service.anonymize(text)
-            assert "[EMAIL_ADDRESS]" in result["anonymized_text"], (
-                f"Failed for: {text}"
-            )
+            assert "[EMAIL_ADDRESS]" in result["anonymized_text"], f"Failed for: {text}"
 
     def test_redacted_token_format(self):
         """All tokens should follow the expected [CATEGORY] format."""
@@ -253,13 +259,10 @@ class TestPIIRegressionIntegration:
             "Alice Johnson" not in anonymized or "[RECIPIENT_NAME]" in anonymized
         )
         assert name_check, "Name not redacted"
-        date_check = (
-            "15 January 2024" not in anonymized or "[EVENT_DATE]" in anonymized
-        )
+        date_check = "15 January 2024" not in anonymized or "[EVENT_DATE]" in anonymized
         assert date_check, "Date not redacted"
         email_check = (
-            "alice.johnson@ngo.org" not in anonymized
-            or "[EMAIL_ADDRESS]" in anonymized
+            "alice.johnson@ngo.org" not in anonymized or "[EMAIL_ADDRESS]" in anonymized
         )
         assert email_check, "Email not redacted"
 
@@ -279,8 +282,7 @@ class TestPIIRegressionIntegration:
     def test_multiple_emails_with_context(self):
         """Multiple emails in text should be detected with proper context."""
         text = (
-            "Send updates to team@company.org and support@company.org "
-            "for processing"
+            "Send updates to team@company.org and support@company.org " "for processing"
         )
         result = self.service.anonymize(text)
 

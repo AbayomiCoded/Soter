@@ -22,7 +22,7 @@ from tests.pii_fixtures import (
     FALSE_POSITIVE_GUARDS,
     FALSE_NEGATIVE_FIXTURES,
     ALL_FIXTURES,
-)
+)  # noqa: E401
 
 
 class PIIScrubberBenchmark:
@@ -254,9 +254,7 @@ class PIIScrubberBenchmark:
             total_redacted = sum(token_counts.values())
 
             passed = (
-                should_contain in anonymized
-                if should_contain
-                else total_redacted > 0
+                should_contain in anonymized if should_contain else total_redacted > 0
             )
 
             if passed:
@@ -355,19 +353,22 @@ class TestPIIScrubberBenchmark:
         """Ensure precision >= 0.85 (acceptable false positive rate)."""
         precision = self.metrics["precision"]
         min_precision = PIIScrubberBenchmark.MIN_PRECISION
-        assert precision >= min_precision, f"Precision {precision} below {min_precision}"
+        msg = f"Precision {precision} below {min_precision}"
+        assert precision >= min_precision, msg
 
     def test_benchmark_recall_meets_minimum(self):
         """Ensure recall >= 0.65 (acceptable false negative rate)."""
         recall = self.metrics["recall"]
         min_recall = PIIScrubberBenchmark.MIN_RECALL
-        assert recall >= min_recall, f"Recall {recall} below {min_recall}"
+        msg = f"Recall {recall} below {min_recall}"
+        assert recall >= min_recall, msg
 
     def test_benchmark_f1_meets_minimum(self):
         """Ensure F1 score >= 0.72 (balanced performance)."""
         f1 = self.metrics["f1_score"]
         min_f1 = PIIScrubberBenchmark.MIN_F1
-        assert f1 >= min_f1, f"F1 {f1} below {min_f1}"
+        msg = f"F1 {f1} below {min_f1}"
+        assert f1 >= min_f1, msg
 
     def test_true_positives_fully_detected(self):
         """All true positive fixtures should be detected."""
