@@ -65,7 +65,7 @@ class PIIScrubberService:
     ]
 
     EMAIL_REGEXES = [
-        r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b",
+        r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
     ]
 
     PHONE_REGEXES = [
@@ -292,7 +292,11 @@ class PIIScrubberService:
 
         sorted_spans = sorted(
             filtered_by_allowlist,
-            key=lambda span: (span.start, -(span.end - span.start)),
+            key=lambda span: (
+                span.start,
+                -(span.end - span.start),
+                0 if span.label == "EMAIL" else 1,  # Prioritize EMAIL
+            ),
         )
         filtered: List[PIISpan] = []
         current_end = -1
