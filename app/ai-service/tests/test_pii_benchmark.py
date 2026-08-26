@@ -379,14 +379,14 @@ class TestPIIScrubberBenchmark:
         fp_details = self.metrics["fixture_breakdown"]["true_positives"]["details"]
         failed = [d for d in fp_details if not d["passed"]]
 
-        assert len(failed) == 0, f"True positive detection failed: {len(failed)} failures"
+        assert len(failed) == 0, f"TP detection failed: {len(failed)} failures"
 
     def test_true_negatives_fully_preserved(self):
         """All true negative fixtures should NOT be scrubbed."""
         tn_details = self.metrics["fixture_breakdown"]["true_negatives"]["details"]
         failed = [d for d in tn_details if not d["passed"]]
 
-        assert len(failed) == 0, f"True negative preservation failed: {len(failed)} failures"
+        assert len(failed) == 0, f"TN preservation failed: {len(failed)} failures"
 
     def test_false_positive_guards_all_pass(self):
         """All false positive guards should prevent over-scrubbing."""
@@ -442,7 +442,7 @@ class TestPIIScrubberBenchmark:
         ]
 
         for field in required_fields:
-            assert field in self.metrics, f"Missing field '{field}' in benchmark results"
+            assert field in self.metrics, f"Missing '{field}' in results"
 
 
 # Fixture for access to benchmark outside of test class
