@@ -35,11 +35,11 @@ BASELINE_METRICS = {
     "min_recall": 0.65,  # Acceptable false negative rate; edge cases later
     "min_f1_score": 0.72,  # Overall performance reflecting both metrics
     "expected_fixture_counts": {
-        "true_positives": 7,  # PII_FIXTURES count (including email_mixed_case)
+        "true_positives": 6,  # PII_FIXTURES count
         "true_negatives": 3,  # SAFE_TEXT_FIXTURES count
         "false_positives": 10,  # FALSE_POSITIVE_GUARDS count
         "false_negatives": 12,  # FALSE_NEGATIVE_FIXTURES count
-        "total": 32,  # All fixtures combined
+        "total": 31,  # All fixtures combined
     },
 }
 

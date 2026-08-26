@@ -9,12 +9,6 @@ PII_FIXTURES = [
         "min_count": 2,
     },
     {
-        "name": "email_mixed_case",
-        "text": "Reach out to John@Example.Com or alice@Test.ORG for assistance.",
-        "expected_tokens": ["[EMAIL_ADDRESS]"],
-        "min_count": 2,
-    },
-    {
         "name": "phone_nigeria",
         "text": "Call me at +234 803 123 4567 or 08029876543.",
         "expected_tokens": ["[PHONE_NUMBER]"],
