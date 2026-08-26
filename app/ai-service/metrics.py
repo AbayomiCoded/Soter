@@ -98,6 +98,18 @@ def check_system_resources(memory_threshold_percent: float = 90.0) -> bool:
     return True
 
 
+# Evidence upload/artifact retention purge metrics
+UPLOAD_PURGE_ITEMS_TOTAL = Counter(
+    "upload_purge_items_total",
+    "Items removed by the evidence upload/artifact purge job",
+    ["kind"],
+)
+UPLOAD_PURGE_BYTES_RECLAIMED_TOTAL = Counter(
+    "upload_purge_bytes_reclaimed_total",
+    "Bytes reclaimed by the evidence upload/artifact purge job",
+    ["kind"],
+)
+
 # Cache stampede prevention metrics
 SINGLE_FLIGHT_SUPPRESSED = Counter(
     "cache_single_flight_suppressed_total",
