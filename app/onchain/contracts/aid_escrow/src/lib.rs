@@ -179,6 +179,15 @@ pub struct PackageCreated {
 }
 
 #[contractevent]
+pub struct PackageReassigned {
+    pub package_id: u64,
+    pub previous_recipient: Address,
+    pub new_recipient: Address,
+    pub actor: Address,
+    pub timestamp: u64,
+}
+
+#[contractevent]
 pub struct PackageClaimed {
     pub package_id: u64,
     pub recipient: Address,
@@ -1410,6 +1419,47 @@ impl AidEscrow {
             actor: admin.clone(),
             timestamp,
             receipt_hash,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    /// Admin reassigns an unclaimed package to a new recipient.
+    pub fn reassign_package(
+        env: Env,
+        package_id: u64,
+        new_recipient: Address,
+    ) -> Result<(), Error> {
+        let admin = Self::get_admin(env.clone())?;
+        admin.require_auth();
+
+        let key = crate::keys::package_key(package_id);
+        let mut package: Package = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(Error::PackageNotFound)?;
+
+        if package.status != PackageStatus::Created {
+            return Err(Error::PackageNotActive);
+        }
+
+        let now = env.ledger().timestamp();
+        if package.expires_at > 0 && now > package.expires_at {
+            return Err(Error::PackageExpired);
+        }
+
+        let previous_recipient = package.recipient.clone();
+        package.recipient = new_recipient.clone();
+        env.storage().persistent().set(&key, &package);
+
+        PackageReassigned {
+            package_id,
+            previous_recipient,
+            new_recipient,
+            actor: admin,
+            timestamp: now,
         }
         .publish(&env);
 
