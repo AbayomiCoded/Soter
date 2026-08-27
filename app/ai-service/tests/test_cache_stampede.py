@@ -34,6 +34,15 @@ def _clear_inflight_state():
 
 
 class TestCacheStampedePrevention:
+    def setup_method(self):
+        # The in-flight single-flight state lives in module-level dicts shared
+        # across the suite.  Reset it between tests so stale entries from a
+        # previous test (whose cleanup task may have been cancelled when its
+        # event loop closed) don't bleed into the next test.
+        _inflight_computations.clear()
+        _inflight_results.clear()
+        _inflight_errors.clear()
+
     @pytest.mark.asyncio
     async def test_single_flight_suppression_async(self):
         """Test that concurrent cache misses result in only one upstream call"""
