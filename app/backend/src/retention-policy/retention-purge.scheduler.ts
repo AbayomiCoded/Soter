@@ -40,7 +40,7 @@ export class RetentionPurgeScheduler {
 
       this.logger.log('Enqueued scheduled retention purge');
     } catch (err) {
-      this.logger.error('Failed to enqueue retention purge', err as any);
+      this.logger.error('Failed to enqueue retention purge', err);
     }
   }
 }
