@@ -7,9 +7,9 @@ export function middleware(request: NextRequest) {
   const allowDemos = process.env.NEXT_PUBLIC_ENABLE_DEMOS === 'true';
 
   // Identify demo paths under app/[locale]/
-  const isDemoRoute = 
-    pathname.includes('/demo-version') || 
-    pathname.includes('/demo-checklist') || 
+  const isDemoRoute =
+    pathname.includes('/demo-version') ||
+    pathname.includes('/demo-checklist') ||
     pathname.includes('/admin-biometric-demo');
 
   if (isProduction && isDemoRoute && !allowDemos) {

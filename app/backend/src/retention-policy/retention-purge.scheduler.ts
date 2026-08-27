@@ -2,7 +2,10 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
-import { RETENTION_PURGE_QUEUE, RetentionPurgeJobData } from './retention-purge.processor';
+import {
+  RETENTION_PURGE_QUEUE,
+  RetentionPurgeJobData,
+} from './retention-purge.processor';
 import { ConfigService } from '@nestjs/config';
 
 @Injectable()
