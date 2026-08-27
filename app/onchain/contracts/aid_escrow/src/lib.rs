@@ -26,24 +26,18 @@ use soroban_sdk::{
 };
 
 mod delegate;
+pub mod keys;
 
 // --- Storage Keys ---
-const KEY_ADMIN: Symbol = symbol_short!("admin");
-const KEY_TOTAL_LOCKED: Symbol = symbol_short!("locked"); // Map<Address, i128>
-const KEY_VERSION: Symbol = symbol_short!("version");
-const KEY_PKG_COUNTER: Symbol = symbol_short!("pkg_cnt");
-const KEY_CONFIG: Symbol = symbol_short!("config");
-const KEY_PKG_IDX: Symbol = symbol_short!("pkg_idx"); // Aggregation index counter
-const KEY_DISTRIBUTORS: Symbol = symbol_short!("dstrbtrs"); // Map<Address, bool>
-const KEY_PAUSED: Symbol = symbol_short!("paused");
-const KEY_PAUSE_CREATE: Symbol = symbol_short!("p_create");
-const KEY_PAUSE_CLAIM: Symbol = symbol_short!("p_claim");
-const KEY_PAUSE_REFUND: Symbol = symbol_short!("p_refund");
-const KEY_PAUSE_WITHDRAW: Symbol = symbol_short!("p_wdrw");
-const KEY_CAMPAIGN_PAUSED: Symbol = symbol_short!("camp_pzd"); // Map<String, bool>
-const KEY_TOTAL_CLAIMED: Symbol = symbol_short!("claimed"); // Map<Address, i128>
-const KEY_PENDING_ADMIN: Symbol = symbol_short!("pend_adm");
-const META_MERKLE_ROOT_KEY: &str = "merkle_root";
+// All storage keys are centralized in the `keys` module and re-exported
+// below so existing call sites keep compiling unchanged. The canonical
+// key-space reference lives in STORAGE_KEYS.md.
+pub use crate::keys::{
+    package_index_entry, package_key, KEY_ADMIN, KEY_CAMPAIGN_PAUSED, KEY_CONFIG, KEY_DELEGATES,
+    KEY_DELEGATE_EXPIRY, KEY_DELEGATE_HISTORY, KEY_DISTRIBUTORS, KEY_PAUSED, KEY_PAUSE_CLAIM,
+    KEY_PAUSE_CREATE, KEY_PAUSE_REFUND, KEY_PAUSE_WITHDRAW, KEY_PENDING_ADMIN, KEY_PKG_COUNTER,
+    KEY_PKG_IDX, KEY_RECIPIENT_LAST_CLAIM, KEY_TOTAL_CLAIMED, KEY_TOTAL_LOCKED, KEY_VERSION,
+};
 
 /// Upper bound on the number of package ids accepted by `batch_claim` in a
 /// single invocation, keeping the call within Soroban resource limits.
@@ -82,6 +76,9 @@ pub struct Config {
     pub min_amount: i128,
     pub max_expires_in: u64,
     pub allowed_tokens: Vec<Address>,
+    /// Minimum number of seconds a recipient must wait between successful
+    /// claims. `0` disables the cooldown.
+    pub claim_cooldown: u64,
 }
 
 #[contracttype]
@@ -117,6 +114,8 @@ pub enum ClaimStatus {
     CampaignPaused = 7,
     /// Eligibility checks passed but the token transfer failed.
     TransferFailed = 8,
+    /// The recipient successfully claimed another package too recently.
+    CooldownActive = 9,
 }
 
 /// Per-package result returned by `batch_claim`.
@@ -154,6 +153,8 @@ pub enum Error {
     NoPendingTransfer = 19,
     InvalidPendingAdmin = 20,
     BatchTooLarge = 21,
+    /// The recipient has not yet completed the configured claim cooldown.
+    ClaimCooldownActive = 22,
 }
 
 // --- Contract Events (indexer-friendly; stable topics & payloads) ---
@@ -173,6 +174,15 @@ pub struct PackageCreated {
     pub package_id: u64,
     pub recipient: Address,
     pub amount: i128,
+    pub actor: Address,
+    pub timestamp: u64,
+}
+
+#[contractevent]
+pub struct PackageReassigned {
+    pub package_id: u64,
+    pub previous_recipient: Address,
+    pub new_recipient: Address,
     pub actor: Address,
     pub timestamp: u64,
 }
@@ -395,6 +405,7 @@ impl AidEscrow {
             min_amount: 1,
             max_expires_in: 0,
             allowed_tokens: Vec::new(&env),
+            claim_cooldown: 0,
         };
         env.storage().instance().set(&KEY_CONFIG, &config);
         Ok(())
@@ -581,7 +592,9 @@ impl AidEscrow {
     /// Admin-only. Updates the global contract configuration.
     ///
     /// # Arguments
-    /// * `config` — New config values (`min_amount`, `max_expires_in`, `allowed_tokens`).
+    /// * `config` — New config values (`min_amount`, `max_expires_in`,
+    ///   `allowed_tokens`, `claim_cooldown`). Set `claim_cooldown` to zero to
+    ///   disable per-recipient throttling.
     ///
     /// # Errors
     /// Returns `Error::InvalidAmount` if `config.min_amount` is zero or negative.
@@ -752,6 +765,7 @@ impl AidEscrow {
             min_amount: 1,
             max_expires_in: 0,
             allowed_tokens: Vec::new(&env),
+            claim_cooldown: 0,
         })
     }
 
@@ -861,7 +875,7 @@ impl AidEscrow {
             }
         }
 
-        let key = (symbol_short!("pkg"), id);
+        let key = crate::keys::package_key(id);
         if env.storage().persistent().has(&key) {
             return Err(Error::PackageIdExists);
         }
@@ -912,7 +926,7 @@ impl AidEscrow {
         }
 
         let idx: u64 = env.storage().instance().get(&KEY_PKG_IDX).unwrap_or(0);
-        let idx_key = (symbol_short!("pidx"), idx);
+        let idx_key = crate::keys::package_index_entry(idx);
         env.storage().persistent().set(&idx_key, &id);
         env.storage().instance().set(&KEY_PKG_IDX, &(idx + 1));
 
@@ -1015,7 +1029,7 @@ impl AidEscrow {
             let id = counter;
             counter += 1;
 
-            let key = (symbol_short!("pkg"), id);
+            let key = crate::keys::package_key(id);
 
             // Create package
             let package = Package {
@@ -1033,7 +1047,7 @@ impl AidEscrow {
             env.storage().persistent().set(&key, &package);
 
             // Track package index for aggregation
-            let idx_key = (symbol_short!("pidx"), idx);
+            let idx_key = crate::keys::package_index_entry(idx);
             env.storage().persistent().set(&idx_key, &id);
             idx += 1;
 
@@ -1075,7 +1089,7 @@ impl AidEscrow {
     /// Recipient claims the package.
     pub fn claim(env: Env, id: u64) -> Result<(), Error> {
         Self::check_action_paused(&env, symbol_short!("claim"))?;
-        let key = (symbol_short!("pkg"), id);
+        let key = crate::keys::package_key(id);
         let mut package: Package = env
             .storage()
             .persistent()
@@ -1133,7 +1147,7 @@ impl AidEscrow {
         proof: Vec<String>,
     ) -> Result<(), Error> {
         Self::check_action_paused(&env, symbol_short!("claim"))?;
-        let key = (symbol_short!("pkg"), id);
+        let key = crate::keys::package_key(id);
         let mut package: Package = env
             .storage()
             .persistent()
@@ -1192,7 +1206,7 @@ impl AidEscrow {
         relayer: Address,
     ) -> Result<(), Error> {
         Self::check_action_paused(&env, symbol_short!("claim"))?;
-        let key = (symbol_short!("pkg"), id);
+        let key = crate::keys::package_key(id);
         let mut package: Package = env
             .storage()
             .persistent()
@@ -1222,6 +1236,8 @@ impl AidEscrow {
             return Err(Error::NotAuthorized);
         }
 
+        Self::ensure_recipient_cooldown(&env, &package.recipient, now)?;
+
         claimant.require_auth();
         relayer.require_auth();
 
@@ -1250,6 +1266,7 @@ impl AidEscrow {
         env.storage()
             .instance()
             .set(&KEY_TOTAL_CLAIMED, &claimed_map);
+        Self::record_recipient_claim(&env, &package.recipient, now);
 
         PackageClaimedByRelayer {
             package_id: id,
@@ -1272,6 +1289,10 @@ impl AidEscrow {
     /// outcome is simply recorded as a non-`Success` `ClaimStatus` in the
     /// returned results. Fund transfers and accounting updates only happen
     /// for packages that resolve to `ClaimStatus::Success`.
+    ///
+    /// When a cooldown is enabled, ids are processed in order. The first
+    /// successful claim records the recipient timestamp; later ids for that
+    /// recipient in the same batch return `ClaimStatus::CooldownActive`.
     ///
     /// Returns `Err(Error::BatchTooLarge)` if more than
     /// `MAX_BATCH_CLAIM_SIZE` ids are supplied, without touching any package.
@@ -1307,7 +1328,7 @@ impl AidEscrow {
             amount: 0,
         };
 
-        let key = (symbol_short!("pkg"), id);
+        let key = crate::keys::package_key(id);
         let mut package: Package = match env.storage().persistent().get(&key) {
             Some(p) => p,
             None => return not_claimable(ClaimStatus::NotFound),
@@ -1337,6 +1358,10 @@ impl AidEscrow {
             return not_claimable(ClaimStatus::Unauthorized);
         }
 
+        if Self::ensure_recipient_cooldown(env, &package.recipient, now).is_err() {
+            return not_claimable(ClaimStatus::CooldownActive);
+        }
+
         let amount = package.amount;
         match Self::finalize_claim(env, &key, &mut package, id, claimant, claimant, now) {
             Ok(()) => BatchClaimResult {
@@ -1355,7 +1380,7 @@ impl AidEscrow {
         let admin = Self::get_admin(env.clone())?;
         admin.require_auth();
 
-        let key = (symbol_short!("pkg"), id);
+        let key = crate::keys::package_key(id);
         let mut package: Package = env
             .storage()
             .persistent()
@@ -1400,12 +1425,53 @@ impl AidEscrow {
         Ok(())
     }
 
+    /// Admin reassigns an unclaimed package to a new recipient.
+    pub fn reassign_package(
+        env: Env,
+        package_id: u64,
+        new_recipient: Address,
+    ) -> Result<(), Error> {
+        let admin = Self::get_admin(env.clone())?;
+        admin.require_auth();
+
+        let key = crate::keys::package_key(package_id);
+        let mut package: Package = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(Error::PackageNotFound)?;
+
+        if package.status != PackageStatus::Created {
+            return Err(Error::PackageNotActive);
+        }
+
+        let now = env.ledger().timestamp();
+        if package.expires_at > 0 && now > package.expires_at {
+            return Err(Error::PackageExpired);
+        }
+
+        let previous_recipient = package.recipient.clone();
+        package.recipient = new_recipient.clone();
+        env.storage().persistent().set(&key, &package);
+
+        PackageReassigned {
+            package_id,
+            previous_recipient,
+            new_recipient,
+            actor: admin,
+            timestamp: now,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
     /// Admin revokes a package (Cancels it). Funds are effectively unlocked but remain in contract pool.
     pub fn revoke(env: Env, id: u64) -> Result<(), Error> {
         let admin = Self::get_admin(env.clone())?;
         admin.require_auth();
 
-        let key = (symbol_short!("pkg"), id);
+        let key = crate::keys::package_key(id);
         let mut package: Package = env
             .storage()
             .persistent()
@@ -1441,7 +1507,7 @@ impl AidEscrow {
         let admin = Self::get_admin(env.clone())?;
         admin.require_auth();
 
-        let key = (symbol_short!("pkg"), id);
+        let key = crate::keys::package_key(id);
         let mut package: Package = env
             .storage()
             .persistent()
@@ -1510,7 +1576,7 @@ impl AidEscrow {
         admin.require_auth();
 
         // 2. Package must exist
-        let key = (symbol_short!("pkg"), package_id);
+        let key = crate::keys::package_key(package_id);
         let mut package: Package = env
             .storage()
             .persistent()
@@ -1548,9 +1614,16 @@ impl AidEscrow {
     }
 
     /// Admin-only package expiration extension.
+    /// Admin-only package expiration extension using a relative time delta.
+    ///
+    /// # Deprecated
+    /// This function is deprecated in favor of `extend_expiry` which uses absolute timestamps.
+    /// This function will be removed in a future version.
+    ///
     /// Requirements: Admin auth, existing package, status must be 'Created', additional_time > 0.
     /// Behavior: Adds additional_time to the package's expires_at timestamp.
     /// Cannot extend unbounded packages (expires_at == 0).
+    #[deprecated(note = "Use extend_expiry with absolute timestamp instead")]
     pub fn extend_expiration(env: Env, package_id: u64, additional_time: u64) -> Result<(), Error> {
         if additional_time == 0 {
             return Err(Error::InvalidAmount);
@@ -1572,7 +1645,7 @@ impl AidEscrow {
         admin.require_auth();
         let config = Self::get_config(env.clone());
 
-        let key = (symbol_short!("pkg"), id);
+        let key = crate::keys::package_key(id);
         let mut package: Package = env
             .storage()
             .persistent()
@@ -1702,7 +1775,7 @@ impl AidEscrow {
 
     /// Extracts the `campaign_ref` metadata value from a package, if present.
     fn campaign_ref_from_metadata(env: &Env, metadata: &Map<Symbol, String>) -> Option<String> {
-        let key = Symbol::new(env, "campaign_ref");
+        let key = Symbol::new(env, keys::META_CAMPAIGN_REF);
         metadata.get(key)
     }
 
@@ -1790,7 +1863,7 @@ impl AidEscrow {
         metadata: &Map<Symbol, String>,
         created_at: u64,
     ) -> Result<u64, Error> {
-        let key = Symbol::new(env, "claim_starts_at");
+        let key = Symbol::new(env, keys::META_CLAIM_STARTS_AT);
         match metadata.get(key) {
             Some(raw) => Self::parse_u64(raw).ok_or(Error::InvalidState),
             None => Ok(created_at),
@@ -1826,6 +1899,7 @@ impl AidEscrow {
         claimant: &Address,
         now: u64,
     ) -> Result<(), Error> {
+        Self::ensure_recipient_cooldown(env, &package.recipient, now)?;
         Self::transfer_token(
             env,
             &package.token,
@@ -1851,6 +1925,7 @@ impl AidEscrow {
         env.storage()
             .instance()
             .set(&KEY_TOTAL_CLAIMED, &claimed_map);
+        Self::record_recipient_claim(env, &package.recipient, now);
 
         // Check if claimant is a delegate (not the recipient)
         let is_delegate = claimant != &package.recipient;
@@ -1898,13 +1973,47 @@ impl AidEscrow {
         Ok(())
     }
 
+    /// Rejects claims made before a recipient's configured cooldown window
+    /// expires. The recipient (rather than a delegate or relayer) is tracked,
+    /// so alternate claim paths cannot bypass the limit.
+    fn ensure_recipient_cooldown(env: &Env, recipient: &Address, now: u64) -> Result<(), Error> {
+        let cooldown = Self::get_config(env.clone()).claim_cooldown;
+        if cooldown == 0 {
+            return Ok(());
+        }
+
+        let claims: Map<Address, u64> = env
+            .storage()
+            .instance()
+            .get(&KEY_RECIPIENT_LAST_CLAIM)
+            .unwrap_or(Map::new(env));
+        if let Some(last_claim) = claims.get(recipient.clone()) {
+            if now.saturating_sub(last_claim) < cooldown {
+                return Err(Error::ClaimCooldownActive);
+            }
+        }
+        Ok(())
+    }
+
+    fn record_recipient_claim(env: &Env, recipient: &Address, now: u64) {
+        let mut claims: Map<Address, u64> = env
+            .storage()
+            .instance()
+            .get(&KEY_RECIPIENT_LAST_CLAIM)
+            .unwrap_or(Map::new(env));
+        claims.set(recipient.clone(), now);
+        env.storage()
+            .instance()
+            .set(&KEY_RECIPIENT_LAST_CLAIM, &claims);
+    }
+
     fn receipt_hash_from_metadata(env: &Env, metadata: &Map<Symbol, String>) -> String {
-        let key = Symbol::new(env, "receipt_hash");
+        let key = Symbol::new(env, keys::META_RECEIPT_HASH);
         metadata.get(key).unwrap_or(String::from_str(env, ""))
     }
 
     fn merkle_root_from_metadata(env: &Env, metadata: &Map<Symbol, String>) -> Option<[u8; 32]> {
-        let root_key = Symbol::new(env, META_MERKLE_ROOT_KEY);
+        let root_key = Symbol::new(env, keys::META_MERKLE_ROOT_KEY);
         metadata
             .get(root_key)
             .and_then(|hex| Self::parse_hex_32(&hex))
@@ -2046,7 +2155,7 @@ impl AidEscrow {
     /// # Errors
     /// Returns `Error::PackageNotFound` if no package exists with the given `id`.
     pub fn get_package(env: Env, id: u64) -> Result<Package, Error> {
-        let key = (symbol_short!("pkg"), id);
+        let key = crate::keys::package_key(id);
         env.storage()
             .persistent()
             .get(&key)
@@ -2079,9 +2188,9 @@ impl AidEscrow {
         let mut total_expired_cancelled: i128 = 0;
 
         for i in 0..count {
-            let idx_key = (symbol_short!("pidx"), i);
+            let idx_key = crate::keys::package_index_entry(i);
             if let Some(pkg_id) = env.storage().persistent().get::<_, u64>(&idx_key) {
-                let pkg_key = (symbol_short!("pkg"), pkg_id);
+                let pkg_key = crate::keys::package_key(pkg_id);
                 if let Some(package) = env.storage().persistent().get::<_, Package>(&pkg_key) {
                     if package.token == token {
                         match package.status {
@@ -2116,11 +2225,11 @@ impl AidEscrow {
     /// storage and is safe to use for dashboard metrics.
     pub fn get_campaign_package_count(env: Env, campaign_ref: String) -> u64 {
         let count: u64 = env.storage().instance().get(&KEY_PKG_COUNTER).unwrap_or(0);
-        let campaign_key = Symbol::new(&env, "campaign_ref");
+        let campaign_key = Symbol::new(&env, keys::META_CAMPAIGN_REF);
         let mut matches = 0;
 
         for id in 0..count {
-            let key = (symbol_short!("pkg"), id);
+            let key = crate::keys::package_key(id);
             if let Some(package) = env.storage().persistent().get::<_, Package>(&key) {
                 if package.metadata.get(campaign_key.clone()).as_ref() == Some(&campaign_ref) {
                     matches += 1;
@@ -2137,11 +2246,11 @@ impl AidEscrow {
     /// over persisted package records and counts only packages whose status is `Claimed`.
     pub fn get_campaign_claim_count(env: Env, campaign_ref: String) -> u64 {
         let count: u64 = env.storage().instance().get(&KEY_PKG_COUNTER).unwrap_or(0);
-        let campaign_key = Symbol::new(&env, "campaign_ref");
+        let campaign_key = Symbol::new(&env, keys::META_CAMPAIGN_REF);
         let mut matches = 0;
 
         for id in 0..count {
-            let key = (symbol_short!("pkg"), id);
+            let key = crate::keys::package_key(id);
             if let Some(package) = env.storage().persistent().get::<_, Package>(&key) {
                 if package.status == PackageStatus::Claimed
                     && package.metadata.get(campaign_key.clone()).as_ref() == Some(&campaign_ref)
@@ -2163,7 +2272,7 @@ impl AidEscrow {
         let mut matches = 0;
 
         for id in 0..count {
-            let key = (symbol_short!("pkg"), id);
+            let key = crate::keys::package_key(id);
             if let Some(package) = env.storage().persistent().get::<_, Package>(&key) {
                 if package.recipient == recipient {
                     matches += 1;
@@ -2202,7 +2311,7 @@ impl AidEscrow {
 
         // Iterate from cursor to end_pos
         for id in cursor..end_pos {
-            let key = (symbol_short!("pkg"), id);
+            let key = crate::keys::package_key(id);
             if let Some(package) = env.storage().persistent().get::<_, Package>(&key) {
                 if package.recipient == recipient {
                     result.push_back(id);
@@ -2237,7 +2346,7 @@ impl AidEscrow {
         admin.require_auth();
 
         // Validate package state
-        let key = (symbol_short!("pkg"), package_id);
+        let key = crate::keys::package_key(package_id);
         let package: Package = env
             .storage()
             .persistent()
@@ -2262,7 +2371,7 @@ impl AidEscrow {
         let expiry_map: Map<u64, u64> = env
             .storage()
             .persistent()
-            .get(&crate::delegate::KEY_DELEGATE_EXPIRY)
+            .get(&KEY_DELEGATE_EXPIRY)
             .unwrap_or(Map::new(&env));
         let expires_at = expiry_map.get(package_id).unwrap_or(0);
 
@@ -2309,7 +2418,7 @@ impl AidEscrow {
         }
 
         // Validate package state
-        let key = (symbol_short!("pkg"), package_id);
+        let key = crate::keys::package_key(package_id);
         let package: Package = env
             .storage()
             .persistent()
@@ -2357,7 +2466,7 @@ impl AidEscrow {
         admin.require_auth();
 
         // Check package exists
-        let key = (symbol_short!("pkg"), package_id);
+        let key = crate::keys::package_key(package_id);
         let package: Package = env
             .storage()
             .persistent()
