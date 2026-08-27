@@ -1,188 +1,172 @@
 import logging
-from unittest.mock import patch
+import time
+from threading import Lock
+from typing import Dict, Optional
 
-import pytest
-
-from services.circuit_breaker import (
-    CircuitBreaker,
-    CircuitBreakerRegistry,
-    CLOSED,
-    OPEN,
-    HALF_OPEN,
-)
+try:
+    from prometheus_client import Gauge
+except ImportError:  # pragma: no cover - metrics are optional
+    Gauge = None
 
 
-@pytest.fixture(autouse=True)
-def clear_registry():
-    CircuitBreakerRegistry._clear_for_tests()
-    yield
-    CircuitBreakerRegistry._clear_for_tests()
+CLOSED = "CLOSED"
+OPEN = "OPEN"
+HALF_OPEN = "HALF_OPEN"
+_STATES = (CLOSED, OPEN, HALF_OPEN)
+
+logger = logging.getLogger(__name__)
 
 
-def make_breaker(**kwargs):
-    defaults = dict(name="test-provider", failure_threshold=3, recovery_timeout=30.0)
-    defaults.update(kwargs)
-    return CircuitBreaker(**defaults)
+if Gauge is not None:
+    _STATE_GAUGE = Gauge(
+        "circuit_breaker_state",
+        "Current circuit breaker state (1 for active state, 0 otherwise)",
+        ("provider", "state"),
+    )
+else:
+    _STATE_GAUGE = None
 
 
-class TestStateTransitions:
-    def test_starts_closed(self):
-        cb = make_breaker()
-        assert cb.state == CLOSED
-        assert cb.allow_request() is True
+class CircuitBreakerRegistry:
+    """Thread-safe registry of configured circuit breakers."""
 
-    def test_stays_closed_below_threshold(self):
-        cb = make_breaker(failure_threshold=3)
-        cb.record_failure()
-        cb.record_failure()
-        assert cb.state == CLOSED
-        assert cb.allow_request() is True
+    _breakers: Dict[str, "CircuitBreaker"] = {}
+    _lock = Lock()
 
-    def test_opens_at_failure_threshold(self, caplog):
-        cb = make_breaker(failure_threshold=3)
-        with caplog.at_level(logging.WARNING):
-            cb.record_failure()
-            cb.record_failure()
-            cb.record_failure()
-        assert cb.state == OPEN
-        assert cb.allow_request() is False
-        assert "failure_threshold_reached" in caplog.text
+    @classmethod
+    def register(cls, breaker: "CircuitBreaker") -> None:
+        with cls._lock:
+            cls._breakers[breaker.name] = breaker
 
-    def test_success_resets_failure_count_while_closed(self):
-        cb = make_breaker(failure_threshold=3)
-        cb.record_failure()
-        cb.record_failure()
-        cb.record_success()
-        assert cb.failure_count == 0
-        cb.record_failure()
-        cb.record_failure()
-        assert cb.state == CLOSED  # count was reset, so 2 failures isn't enough
+    @classmethod
+    def get(cls, provider: str) -> Optional["CircuitBreaker"]:
+        with cls._lock:
+            return cls._breakers.get(provider)
 
-    @patch("services.circuit_breaker.time.time")
-    def test_transitions_to_half_open_after_recovery_timeout(self, mock_time):
-        mock_time.return_value = 1000.0
-        cb = make_breaker(failure_threshold=1, recovery_timeout=30.0)
-        cb.record_failure()
-        assert cb.state == OPEN
+    @classmethod
+    def all_states(cls) -> Dict[str, dict]:
+        with cls._lock:
+            breakers = list(cls._breakers.items())
+        return {provider: breaker.get_state() for provider, breaker in breakers}
 
-        mock_time.return_value = 1000.0 + 10  # not enough time elapsed
-        assert cb.allow_request() is False
-        assert cb.state == OPEN
+    @classmethod
+    def reset(cls, provider: str, reason: str = "manual_reset") -> dict:
+        breaker = cls.get(provider)
+        if breaker is None:
+            raise KeyError(provider)
+        breaker.reset(reason=reason)
+        return breaker.get_state()
 
-        mock_time.return_value = 1000.0 + 30  # timeout fully elapsed
-        assert cb.allow_request() is True
-        assert cb.state == HALF_OPEN
-
-    @patch("services.circuit_breaker.time.time")
-    def test_half_open_success_closes_circuit(self, mock_time):
-        mock_time.return_value = 1000.0
-        cb = make_breaker(failure_threshold=1, recovery_timeout=30.0)
-        cb.record_failure()
-        mock_time.return_value = 1030.0
-        cb.allow_request()  # -> HALF_OPEN
-        assert cb.state == HALF_OPEN
-
-        cb.record_success()
-        assert cb.state == CLOSED
-        assert cb.failure_count == 0
-
-    @patch("services.circuit_breaker.time.time")
-    def test_half_open_failure_reopens_circuit(self, mock_time):
-        mock_time.return_value = 1000.0
-        cb = make_breaker(failure_threshold=1, recovery_timeout=30.0)
-        cb.record_failure()
-        mock_time.return_value = 1030.0
-        cb.allow_request()  # -> HALF_OPEN
-        assert cb.state == HALF_OPEN
-
-        cb.record_failure()
-        assert cb.state == OPEN
-
-    def test_transition_logs_include_reason_and_provider(self, caplog):
-        cb = make_breaker(name="stripe", failure_threshold=1)
-        with caplog.at_level(logging.WARNING):
-            cb.record_failure()
-        record = caplog.records[-1]
-        assert record.provider == "stripe"
-        assert record.to_state == OPEN
-        assert record.reason  # some non-empty reason string was attached
+    @classmethod
+    def _clear_for_tests(cls) -> None:
+        with cls._lock:
+            cls._breakers.clear()
 
 
-class TestTimeUntilRetry:
-    def test_zero_when_closed(self):
-        cb = make_breaker()
-        assert cb.time_until_retry() == 0.0
+class CircuitBreaker:
+    """Thread-safe implementation of the circuit breaker pattern."""
 
-    @patch("services.circuit_breaker.time.time")
-    def test_counts_down_while_open(self, mock_time):
-        mock_time.return_value = 1000.0
-        cb = make_breaker(failure_threshold=1, recovery_timeout=30.0)
-        cb.record_failure()
-        assert cb.time_until_retry() == 30.0
+    def __init__(
+        self, name: str, failure_threshold: int = 3, recovery_timeout: float = 30.0
+    ):
+        self.name = name
+        self.failure_threshold = failure_threshold
+        self.recovery_timeout = recovery_timeout
+        self.state = CLOSED
+        self.failure_count = 0
+        self.last_state_change = time.time()
+        self._lock = Lock()
 
-        mock_time.return_value = 1000.0 + 10
-        assert cb.time_until_retry() == pytest.approx(20.0)
+        CircuitBreakerRegistry.register(self)
+        self._update_metric()
 
-        mock_time.return_value = 1000.0 + 45  # elapsed past the timeout
-        assert cb.time_until_retry() == 0.0
+    def _update_metric(self) -> None:
+        if _STATE_GAUGE is None:
+            return
+        for state in _STATES:
+            _STATE_GAUGE.labels(provider=self.name, state=state).set(
+                1 if state == self.state else 0
+            )
 
-    @patch("services.circuit_breaker.time.time")
-    def test_zero_immediately_after_manual_reset(self, mock_time):
-        mock_time.return_value = 1000.0
-        cb = make_breaker(failure_threshold=1, recovery_timeout=30.0)
-        cb.record_failure()
-        assert cb.time_until_retry() == 30.0
+    def _transition(self, state: str, reason: str, level: int = logging.INFO) -> None:
+        previous_state = self.state
+        self.state = state
+        self.last_state_change = time.time()
+        self._update_metric()
+        logger.log(
+            level,
+            "circuit_breaker_state_transition provider=%s from_state=%s "
+            "to_state=%s failure_count=%s reason=%s",
+            self.name,
+            previous_state,
+            state,
+            self.failure_count,
+            reason,
+            extra={
+                "provider": self.name,
+                "from_state": previous_state,
+                "to_state": state,
+                "failure_count": self.failure_count,
+                "reason": reason,
+            },
+        )
 
-        cb.reset()
-        assert cb.state == CLOSED
-        assert cb.time_until_retry() == 0.0
+    def allow_request(self) -> bool:
+        with self._lock:
+            if self.state == OPEN:
+                elapsed = time.time() - self.last_state_change
+                if elapsed >= self.recovery_timeout:
+                    self._transition(
+                        HALF_OPEN,
+                        f"recovery_timeout_elapsed:{self.recovery_timeout}s",
+                    )
+                    return True
+                return False
+            return True
 
+    def record_success(self) -> None:
+        with self._lock:
+            if self.state == HALF_OPEN:
+                self.failure_count = 0
+                self._transition(CLOSED, "probe_succeeded")
+            elif self.state == CLOSED:
+                self.failure_count = 0
 
-class TestManualReset:
-    def test_reset_forces_closed_even_mid_timeout(self):
-        cb = make_breaker(failure_threshold=1, recovery_timeout=9999)
-        cb.record_failure()
-        assert cb.state == OPEN
+    def record_failure(self) -> None:
+        with self._lock:
+            self.failure_count += 1
+            if self.state == HALF_OPEN:
+                self._transition(OPEN, "probe_failed", logging.WARNING)
+            elif self.state == CLOSED and self.failure_count >= self.failure_threshold:
+                self._transition(
+                    OPEN,
+                    "failure_threshold_reached:"
+                    f"{self.failure_count}/{self.failure_threshold}",
+                    logging.WARNING,
+                )
 
-        cb.reset(reason="operator_override")
-        assert cb.state == CLOSED
-        assert cb.failure_count == 0
-        assert cb.allow_request() is True
+    def time_until_retry(self) -> float:
+        with self._lock:
+            if self.state != OPEN:
+                return 0.0
+            elapsed = time.time() - self.last_state_change
+            return max(0.0, self.recovery_timeout - elapsed)
 
-    def test_reset_logs_reason(self, caplog):
-        cb = make_breaker(failure_threshold=1)
-        cb.record_failure()
-        with caplog.at_level(logging.INFO):
-            cb.reset(reason="operator_override")
-        assert "operator_override" in caplog.text
+    def get_state(self) -> dict:
+        with self._lock:
+            if self.state == OPEN:
+                elapsed = time.time() - self.last_state_change
+                retry = max(0.0, self.recovery_timeout - elapsed)
+            else:
+                retry = 0.0
+            return {
+                "provider": self.name,
+                "state": self.state,
+                "failure_count": self.failure_count,
+                "time_until_retry": retry,
+            }
 
-
-class TestRegistry:
-    def test_registers_on_creation(self):
-        cb = make_breaker(name="paypal")
-        assert CircuitBreakerRegistry.get("paypal") is cb
-
-    def test_unconfigured_provider_returns_none(self):
-        # Distinguishes "never configured" from "circuit open" per the
-        # ticket's motivating incident scenario.
-        assert CircuitBreakerRegistry.get("never-configured-provider") is None
-
-    def test_all_states_reports_every_registered_provider(self):
-        make_breaker(name="stripe")
-        make_breaker(name="paypal")
-        states = CircuitBreakerRegistry.all_states()
-        assert set(states.keys()) == {"stripe", "paypal"}
-        assert states["stripe"]["state"] == CLOSED
-
-    def test_registry_reset_updates_breaker(self):
-        cb = make_breaker(name="stripe", failure_threshold=1)
-        cb.record_failure()
-        assert cb.state == OPEN
-
-        result = CircuitBreakerRegistry.reset("stripe", reason="via_admin_api")
-        assert result["state"] == CLOSED
-        assert cb.state == CLOSED
-
-    def test_registry_reset_unknown_provider_raises(self):
-        with pytest.raises(KeyError):
-            CircuitBreakerRegistry.reset("does-not-exist")
+    def reset(self, reason: str = "manual_reset") -> None:
+        with self._lock:
+            self.failure_count = 0
+            self._transition(CLOSED, reason)
