@@ -64,7 +64,8 @@ expires and is refunded.
 | `revoke(env, id)` | Admin | Admin revokes a package, returning funds to the surplus pool. |
 | `refund(env, id)` | Admin | Refunds an expired or cancelled package to the admin. |
 | `cancel_package(env, package_id)` | Admin | Cancels a package (transitions to Cancelled status). |
-| `extend_expiration(env, package_id, additional_time)` | Admin / Distributor | Extends the expiration time of an active package. |
+| `extend_expiry(env, id, new_expires_at)` | Admin / Distributor | Extends the expiration time of an active package using an absolute timestamp. |
+| `extend_expiration(env, package_id, additional_time)` | Admin / Distributor | **Deprecated**: Use `extend_expiry` instead. Extends using a relative time delta. |
 
 ### Queries
 
@@ -141,6 +142,13 @@ pub struct Aggregates {
     pub total_expired_cancelled: i128,
 }
 ```
+
+## Storage
+
+All ledger keys (singletons, namespaced package records, delegate data) are
+centralized in `src/keys.rs`. The canonical key-space reference — every key's
+encoded value, stored type, lifetime, and the keys a migration must consider —
+is documented in [`STORAGE_KEYS.md`](./STORAGE_KEYS.md).
 
 ## Events
 
