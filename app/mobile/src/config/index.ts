@@ -29,6 +29,12 @@ export interface AppConfig {
   largeUploadThreshold?: number;
   /** Whether to allow sync on metered connections without user opt-in */
   allowMeteredSync?: boolean;
+  /** Maximum serialized AsyncStorage bytes for cached aid packages */
+  aidCacheMaxBytes: number;
+  /** Maximum serialized AsyncStorage bytes for cached tasks */
+  taskCacheMaxBytes: number;
+  /** Ratio of cache usage at which the app warns operators */
+  localCacheWarningRatio: number;
 }
 
 /**
@@ -82,6 +88,15 @@ const buildConfig = (): AppConfig => {
       ? parseInt(process.env.EXPO_PUBLIC_LARGE_UPLOAD_THRESHOLD, 10) 
       : 5 * 1024 * 1024, // Default: 5MB
     allowMeteredSync: process.env.EXPO_PUBLIC_ALLOW_METERED_SYNC === 'true',
+    aidCacheMaxBytes: process.env.EXPO_PUBLIC_AID_CACHE_MAX_BYTES
+      ? parseInt(process.env.EXPO_PUBLIC_AID_CACHE_MAX_BYTES, 10)
+      : 512 * 1024,
+    taskCacheMaxBytes: process.env.EXPO_PUBLIC_TASK_CACHE_MAX_BYTES
+      ? parseInt(process.env.EXPO_PUBLIC_TASK_CACHE_MAX_BYTES, 10)
+      : 256 * 1024,
+    localCacheWarningRatio: process.env.EXPO_PUBLIC_LOCAL_CACHE_WARNING_RATIO
+      ? parseFloat(process.env.EXPO_PUBLIC_LOCAL_CACHE_WARNING_RATIO)
+      : 0.8,
     isValid: errors.length === 0,
     errors,
   };
