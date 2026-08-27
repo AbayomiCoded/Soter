@@ -60,16 +60,28 @@ _pol.ProofOfLifeAnalyzer = MagicMock()
 _pol.ProofOfLifeConfig = MagicMock()
 sys.modules["proof_of_life"] = _pol
 
+# Configure cv2 stub if mocked
+if "cv2" in sys.modules and isinstance(sys.modules["cv2"], MagicMock):
+    cv2_mock = sys.modules["cv2"]
+    cv2_mock.THRESH_BINARY = 0
+    cv2_mock.THRESH_OTSU = 8
+    cv2_mock.ADAPTIVE_THRESH_GAUSSIAN_C = 1
+    cv2_mock.COLOR_GRAY2BGR = 8
+    cv2_mock.COLOR_BGR2GRAY = 6
+    cv2_mock.threshold.side_effect = lambda src, thresh, maxval, type: (0, src)
+    cv2_mock.adaptiveThreshold.side_effect = lambda src, *args, **kwargs: src
+    cv2_mock.fastNlMeansDenoisingColored.side_effect = lambda src, *args, **kwargs: src
+    cv2_mock.cvtColor.side_effect = lambda src, *args, **kwargs: src
+
 # Patch metrics.check_system_resources so the monitor_requests middleware
 # doesn't crash when torch (vram) is a MagicMock.
 import metrics
+import pytest
 
 metrics.check_system_resources = lambda **kwargs: True
 
 # ==================== PII Scrubber Benchmark Fixtures ====================
 # Fixtures for regression benchmark tests
-
-import pytest
 
 
 @pytest.fixture(autouse=True)
