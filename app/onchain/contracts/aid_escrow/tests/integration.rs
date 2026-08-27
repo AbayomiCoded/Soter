@@ -140,6 +140,7 @@ fn test_set_get_config() {
         min_amount: UNIT,
         max_expires_in: 3600,
         allowed_tokens: tokens,
+        claim_cooldown: 0,
     };
     client.set_config(&config);
     assert_eq!(client.get_config(), config);
@@ -165,6 +166,7 @@ fn test_config_constraints_on_create_package() {
         min_amount: 5 * UNIT,
         max_expires_in: 1000,
         allowed_tokens: allowed,
+        claim_cooldown: 0,
     });
 
     let now = env.ledger().timestamp();
@@ -431,6 +433,7 @@ fn test_config_constraints_on_extend_expiration() {
         min_amount: UNIT,
         max_expires_in: 500,
         allowed_tokens: Vec::new(&env),
+        claim_cooldown: 0,
     });
 
     let now = env.ledger().timestamp();
@@ -568,4 +571,56 @@ fn test_extend_expiration_multiple_extends() {
     client.extend_expiration(&1, &100);
     client.extend_expiration(&1, &200);
     assert_eq!(client.get_package(&1).expires_at, initial + 300);
+}
+
+#[test]
+fn test_extend_expiry_absolute_and_relative_semantics() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (token_client, token_admin_client) = setup_token(&env, &Address::generate(&env));
+    let client = AidEscrowClient::new(&env, &env.register(AidEscrow, ()));
+    client.init(&admin);
+
+    token_admin_client.mint(&admin, &UNIT);
+    client.fund(&token_client.address, &admin, &UNIT);
+
+    // Test absolute timestamp extension (canonical approach)
+    let initial_expiry = env.ledger().timestamp() + 1000;
+    client.create_package(
+        &admin,
+        &10,
+        &Address::generate(&env),
+        &UNIT,
+        &token_client.address,
+        &initial_expiry,
+        &Map::new(&env),
+    );
+
+    let new_absolute_expiry = initial_expiry + 500;
+    client.extend_expiry(&10, &new_absolute_expiry);
+    assert_eq!(client.get_package(&10).expires_at, new_absolute_expiry);
+
+    // Test relative time extension (deprecated approach)
+    token_admin_client.mint(&admin, &UNIT);
+    client.fund(&token_client.address, &admin, &UNIT);
+
+    let initial_expiry2 = env.ledger().timestamp() + 1000;
+    client.create_package(
+        &admin,
+        &11,
+        &Address::generate(&env),
+        &UNIT,
+        &token_client.address,
+        &initial_expiry2,
+        &Map::new(&env),
+    );
+
+    let additional_time = 500;
+    client.extend_expiration(&11, &additional_time);
+    assert_eq!(
+        client.get_package(&11).expires_at,
+        initial_expiry2 + additional_time
+    );
 }

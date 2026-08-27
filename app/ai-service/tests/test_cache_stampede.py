@@ -14,7 +14,16 @@ from services.cache import (
 
 
 @pytest.fixture(autouse=True)
-def reset_inflight():
+def _clear_inflight_state():
+    """Reset module-level single-flight tracking dicts between tests.
+
+    ``_inflight_computations``, ``_inflight_results`` and
+    ``_inflight_errors`` are module-level singletons in
+    ``services.cache``.  Without explicit cleanup, stale entries from a
+    previous test can trick the single-flight suppression logic into
+    thinking a concurrent computation is already in flight, causing the
+    wrapped function to never be called (call_count stays 0).
+    """
     _inflight_computations.clear()
     _inflight_results.clear()
     _inflight_errors.clear()
@@ -25,6 +34,15 @@ def reset_inflight():
 
 
 class TestCacheStampedePrevention:
+    def setup_method(self):
+        # The in-flight single-flight state lives in module-level dicts shared
+        # across the suite.  Reset it between tests so stale entries from a
+        # previous test (whose cleanup task may have been cancelled when its
+        # event loop closed) don't bleed into the next test.
+        _inflight_computations.clear()
+        _inflight_results.clear()
+        _inflight_errors.clear()
+
     @pytest.mark.asyncio
     async def test_single_flight_suppression_async(self):
         """Test that concurrent cache misses result in only one upstream call"""
