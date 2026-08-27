@@ -2861,7 +2861,7 @@ mod tests {
 
         // Requesting more than MAX_PAGE_SIZE must be silently capped.
         let result = client.list_recipient_packages(&recipient, &0, &(MAX_PAGE_SIZE + 100));
-        assert!(result.len() <= MAX_PAGE_SIZE as u32);
+        assert!(result.len() <= MAX_PAGE_SIZE);
     }
 
     #[test]
