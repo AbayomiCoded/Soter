@@ -1,9 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
-import {
-  ProviderHealthRegistryService,
-  ProviderStatus,
-} from './provider-health-registry.service';
+import { ProviderHealthRegistryService } from './provider-health-registry.service';
 
 describe('ProviderHealthRegistryService', () => {
   let service: ProviderHealthRegistryService;
@@ -105,7 +102,7 @@ describe('ProviderHealthRegistryService', () => {
       expect(svc.getStatus('ocr')).toBe('down');
 
       // Wait for the window to expire
-      await new Promise((resolve) => setTimeout(resolve, 80));
+      await new Promise(resolve => setTimeout(resolve, 80));
 
       // New successes should dominate
       svc.recordSuccess('ocr');

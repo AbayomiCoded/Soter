@@ -71,8 +71,7 @@ export class SendGridEmailAdapter implements DeliveryAdapter {
       if (response.status === 202 || response.status === 200) {
         // SendGrid returns the message ID in the x-message-id header
         const messageId =
-          response.headers.get('x-message-id') ??
-          `sg-${Date.now()}`;
+          response.headers.get('x-message-id') ?? `sg-${Date.now()}`;
 
         this.logger.log(
           `Email sent to ${params.recipient} (messageId=${messageId})`,
@@ -85,7 +84,9 @@ export class SendGridEmailAdapter implements DeliveryAdapter {
       }
 
       // Non-success status
-      const errorBody = await response.text().catch(() => 'Unable to read body');
+      const errorBody = await response
+        .text()
+        .catch(() => 'Unable to read body');
       this.logger.error(
         `SendGrid API returned ${response.status}: ${errorBody}`,
       );
@@ -95,8 +96,7 @@ export class SendGridEmailAdapter implements DeliveryAdapter {
         error: `SendGrid API error: HTTP ${response.status}`,
       };
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : String(error);
+      const message = error instanceof Error ? error.message : String(error);
       this.logger.error(`SendGrid request failed: ${message}`);
 
       return {

@@ -34,8 +34,7 @@ describe('SendGridEmailAdapter', () => {
 
   it('should throw if SENDGRID_FROM_EMAIL is missing', () => {
     const badConfig = {
-      get: (key: string) =>
-        key === 'SENDGRID_API_KEY' ? 'SG.key' : undefined,
+      get: (key: string) => (key === 'SENDGRID_API_KEY' ? 'SG.key' : undefined),
     } as unknown as ConfigService;
 
     expect(() => new SendGridEmailAdapter(badConfig)).toThrow(

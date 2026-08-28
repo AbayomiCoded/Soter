@@ -9,7 +9,11 @@ import {
 import { Response } from 'express';
 import { RequestWithRequestId } from '../middleware/request-correlation.middleware';
 import { HealthService } from './health.service';
-import { LivenessResponse, ReadinessResponse, ProviderHealthResponse } from './health.service';
+import {
+  LivenessResponse,
+  ReadinessResponse,
+  ProviderHealthResponse,
+} from './health.service';
 import { API_VERSIONS } from '../common/constants/api-version.constants';
 import { Public } from '../common/decorators/public.decorator';
 import { SkipThrottle } from '../common/decorators/skip-throttle.decorator';
@@ -196,7 +200,8 @@ export class HealthController {
       'Returns active providers, model versions, and capability flags. No secrets or private credentials are included. Suitable for linking from health probes and diagnostics surfaces.',
   })
   @ApiOkResponse({
-    description: 'Service metadata with providers, models, and capability flags.',
+    description:
+      'Service metadata with providers, models, and capability flags.',
     schema: {
       example: {
         service: 'soter-backend',

@@ -4,6 +4,7 @@ import { Job } from 'bullmq';
 import {
   NotificationJobData,
   NotificationResult,
+  NotificationType,
 } from './interfaces/notification-job.interface';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -62,7 +63,9 @@ export class NotificationProcessor extends WorkerHost {
     try {
       // Select the correct delivery adapter based on notification type
       const adapter =
-        job.data.type === 'email' ? this.emailAdapter : this.smsAdapter;
+        job.data.type === NotificationType.EMAIL
+          ? this.emailAdapter
+          : this.smsAdapter;
 
       const deliveryResult = await adapter.send({
         recipient: job.data.recipient,
@@ -125,7 +128,9 @@ export class NotificationProcessor extends WorkerHost {
     );
 
     try {
-      const startedAt = job.processedOn ? new Date(job.processedOn) : new Date();
+      const startedAt = job.processedOn
+        ? new Date(job.processedOn)
+        : new Date();
       const completedAt = new Date();
       await this.prisma.notificationDeliveryAttempt.create({
         data: {
@@ -201,7 +206,9 @@ export class NotificationProcessor extends WorkerHost {
     );
 
     try {
-      const startedAt = job.processedOn ? new Date(job.processedOn) : new Date();
+      const startedAt = job.processedOn
+        ? new Date(job.processedOn)
+        : new Date();
       const completedAt = new Date();
       await this.prisma.notificationDeliveryAttempt.create({
         data: {

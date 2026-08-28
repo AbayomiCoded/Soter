@@ -107,7 +107,7 @@ export class ProviderHealthRegistryService {
     const now = Date.now();
     const windowStart = now - this.windowMs;
     const all = (this.events.get(provider) ?? []).filter(
-      (e) => e.timestamp >= windowStart,
+      e => e.timestamp >= windowStart,
     );
 
     // No data → healthy (we cannot claim degradation without evidence).
@@ -121,7 +121,7 @@ export class ProviderHealthRegistryService {
       };
     }
 
-    const failures = all.filter((e) => !e.success).length;
+    const failures = all.filter(e => !e.success).length;
     const failureRate = failures / all.length;
 
     let status: ProviderStatus = 'healthy';
@@ -161,7 +161,9 @@ export class ProviderHealthRegistryService {
   private parsePositiveInt(raw: string | undefined, fallback: number): number {
     if (raw == null) return fallback;
     const parsed = Number(raw);
-    return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+    return Number.isFinite(parsed) && parsed > 0
+      ? Math.floor(parsed)
+      : fallback;
   }
 
   private parseThreshold(raw: string | undefined, fallback: number): number {

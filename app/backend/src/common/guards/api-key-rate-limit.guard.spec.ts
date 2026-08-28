@@ -16,9 +16,7 @@ describe('ApiKeyRateLimitGuard', () => {
   let reflectorMock: { getAllAndOverride: jest.Mock };
   let metricsMock: { incrementApiKeyRateLimitRejection: jest.Mock };
 
-  const makeContext = (
-    user?: Record<string, unknown>,
-  ): ExecutionContext => {
+  const makeContext = (user?: Record<string, unknown>): ExecutionContext => {
     const headers: Record<string, string> = {};
     const res = {
       setHeader: jest.fn(),
@@ -95,7 +93,7 @@ describe('ApiKeyRateLimitGuard', () => {
     await expect(guard.canActivate(ctx)).resolves.toBe(true);
 
     // Verify rate-limit headers were set
-    const res = ctx.switchToHttp().getResponse() as any;
+    const res = ctx.switchToHttp().getResponse();
     expect(res.setHeader).toHaveBeenCalledWith('X-RateLimit-Limit', 200);
     expect(res.setHeader).toHaveBeenCalledWith('X-RateLimit-Remaining', 195);
     expect(res.setHeader).toHaveBeenCalledWith(
@@ -123,7 +121,10 @@ describe('ApiKeyRateLimitGuard', () => {
       expect((e as HttpException).getStatus()).toBe(
         HttpStatus.TOO_MANY_REQUESTS,
       );
-      const body = (e as HttpException).getResponse() as Record<string, unknown>;
+      const body = (e as HttpException).getResponse() as Record<
+        string,
+        unknown
+      >;
       expect(body.code).toBe('API_KEY_RATE_LIMIT_EXCEEDED');
       expect(body.limit).toBe(200);
       expect(body.retryAfter).toBe(30);
@@ -170,7 +171,10 @@ describe('ApiKeyRateLimitGuard', () => {
     try {
       await guard.canActivate(ctx);
     } catch (e) {
-      const body = (e as HttpException).getResponse() as Record<string, unknown>;
+      const body = (e as HttpException).getResponse() as Record<
+        string,
+        unknown
+      >;
       expect(body.limit).toBe(100); // write limit, the more restrictive
     }
   });
@@ -191,7 +195,7 @@ describe('ApiKeyRateLimitGuard', () => {
       // Expected
     }
 
-    const res = ctx.switchToHttp().getResponse() as any;
+    const res = ctx.switchToHttp().getResponse();
     expect(res.setHeader).toHaveBeenCalledWith('Retry-After', 25);
   });
 
@@ -211,9 +215,10 @@ describe('ApiKeyRateLimitGuard', () => {
       // Expected
     }
 
-    expect(
-      metricsMock.incrementApiKeyRateLimitRejection,
-    ).toHaveBeenCalledWith('read', 'key-metric');
+    expect(metricsMock.incrementApiKeyRateLimitRejection).toHaveBeenCalledWith(
+      'read',
+      'key-metric',
+    );
   });
 
   it('should set expire only on first increment', async () => {

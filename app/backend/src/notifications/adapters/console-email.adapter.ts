@@ -18,6 +18,7 @@ export class ConsoleEmailAdapter implements DeliveryAdapter {
     subject?: string;
     message: string;
   }): Promise<DeliveryResult> {
+    await Promise.resolve();
     const messageId = `console-email-${Date.now()}`;
 
     this.logger.log(

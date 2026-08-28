@@ -72,9 +72,7 @@ export class TwilioSmsAdapter implements DeliveryAdapter {
         const data = (await response.json()) as { sid?: string };
         const sid = data.sid ?? `twilio-${Date.now()}`;
 
-        this.logger.log(
-          `SMS sent to ${params.recipient} (sid=${sid})`,
-        );
+        this.logger.log(`SMS sent to ${params.recipient} (sid=${sid})`);
 
         return {
           success: true,
@@ -82,18 +80,17 @@ export class TwilioSmsAdapter implements DeliveryAdapter {
         };
       }
 
-      const errorBody = await response.text().catch(() => 'Unable to read body');
-      this.logger.error(
-        `Twilio API returned ${response.status}: ${errorBody}`,
-      );
+      const errorBody = await response
+        .text()
+        .catch(() => 'Unable to read body');
+      this.logger.error(`Twilio API returned ${response.status}: ${errorBody}`);
 
       return {
         success: false,
         error: `Twilio API error: HTTP ${response.status}`,
       };
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : String(error);
+      const message = error instanceof Error ? error.message : String(error);
       this.logger.error(`Twilio request failed: ${message}`);
 
       return {

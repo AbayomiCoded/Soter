@@ -28,10 +28,13 @@ interface RateLimitUser {
  * Per-scope default rate limits (requests per window).
  * Overridable via env vars RATE_LIMIT_SCOPE_<SCOPE>_LIMIT / _WINDOW.
  */
-const DEFAULT_SCOPE_LIMITS: Record<ApiKeyScope, { limit: number; window: number }> = {
-  [ApiKeyScope.read]:    { limit: 200, window: 60 },
-  [ApiKeyScope.write]:   { limit: 100, window: 60 },
-  [ApiKeyScope.admin]:   { limit: 300, window: 60 },
+const DEFAULT_SCOPE_LIMITS: Record<
+  ApiKeyScope,
+  { limit: number; window: number }
+> = {
+  [ApiKeyScope.read]: { limit: 200, window: 60 },
+  [ApiKeyScope.write]: { limit: 100, window: 60 },
+  [ApiKeyScope.admin]: { limit: 300, window: 60 },
   [ApiKeyScope.webhook]: { limit: 500, window: 60 },
 };
 
@@ -142,7 +145,10 @@ export class ApiKeyRateLimitGuard implements CanActivate {
    * Resolve the effective rate limit for a set of scopes.
    * Takes the *most restrictive* (lowest) limit across all scopes the key holds.
    */
-  private resolveLimit(scopes: ApiKeyScope[]): { limit: number; window: number } {
+  private resolveLimit(scopes: ApiKeyScope[]): {
+    limit: number;
+    window: number;
+  } {
     let minLimit = Infinity;
     let associatedWindow = 60;
 
@@ -162,7 +168,10 @@ export class ApiKeyRateLimitGuard implements CanActivate {
     return { limit: minLimit, window: associatedWindow };
   }
 
-  private getScopeLimitConfig(scope: ApiKeyScope): { limit: number; window: number } {
+  private getScopeLimitConfig(scope: ApiKeyScope): {
+    limit: number;
+    window: number;
+  } {
     const envPrefix = `RATE_LIMIT_SCOPE_${scope.toUpperCase()}`;
 
     const limitRaw = this.config.get<string>(`${envPrefix}_LIMIT`);

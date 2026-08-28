@@ -18,6 +18,7 @@ export class ConsoleSmsAdapter implements DeliveryAdapter {
     subject?: string;
     message: string;
   }): Promise<DeliveryResult> {
+    await Promise.resolve();
     const messageId = `console-sms-${Date.now()}`;
 
     this.logger.log(
