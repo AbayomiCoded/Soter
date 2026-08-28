@@ -35,6 +35,10 @@ export interface AppConfig {
   taskCacheMaxBytes: number;
   /** Ratio of cache usage at which the app warns operators */
   localCacheWarningRatio: number;
+  /** Base64-encoded SHA-256 SPKI pins for the API host (primary + backups) used for certificate pinning */
+  certPinHashes: string[];
+  /** Whether to pin all subdomains of the API host, not just the exact hostname */
+  certPinIncludeSubdomains: boolean;
 }
 
 /**
@@ -73,6 +77,11 @@ const buildConfig = (): AppConfig => {
     errors.push(`Invalid API URL: ${apiUrl}`);
   }
 
+  const certPinHashes = (process.env.EXPO_PUBLIC_CERT_PIN_HASHES || '')
+    .split(',')
+    .map((hash: string) => hash.trim())
+    .filter(Boolean);
+
   return {
     apiUrl,
     envName,
@@ -97,6 +106,8 @@ const buildConfig = (): AppConfig => {
     localCacheWarningRatio: process.env.EXPO_PUBLIC_LOCAL_CACHE_WARNING_RATIO
       ? parseFloat(process.env.EXPO_PUBLIC_LOCAL_CACHE_WARNING_RATIO)
       : 0.8,
+    certPinHashes,
+    certPinIncludeSubdomains: process.env.EXPO_PUBLIC_CERT_PIN_INCLUDE_SUBDOMAINS === 'true',
     isValid: errors.length === 0,
     errors,
   };
