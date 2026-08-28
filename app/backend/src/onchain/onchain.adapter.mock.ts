@@ -107,7 +107,12 @@ export class MockOnchainAdapter implements OnchainAdapter {
       timestamp: new Date(),
       status: 'success',
       metadata: {
-        ...pkg,
+        packageId: params.packageId,
+        operatorAddress: params.operatorAddress,
+        recipientAddress: params.recipientAddress,
+        amount: params.amount,
+        tokenAddress: params.tokenAddress,
+        expiresAt: params.expiresAt,
         adapter: 'mock',
       },
     };
