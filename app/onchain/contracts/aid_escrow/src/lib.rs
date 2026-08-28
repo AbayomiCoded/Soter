@@ -73,6 +73,7 @@ pub struct Package {
     pub expires_at: u64,
     pub claim_starts_at: u64,
     pub metadata: Map<Symbol, String>,
+    pub evidence_hash: String,
 }
 
 #[contracttype]
@@ -383,6 +384,16 @@ pub struct TokenAdded {
 pub struct TokenRemoved {
     pub admin: Address,
     pub token: Address,
+    pub timestamp: u64,
+}
+
+/// Emitted when an evidence hash is attached to a package.
+/// Only admin can attach evidence hash, and it cannot overwrite an existing hash.
+#[contractevent]
+pub struct EvidenceAttached {
+    pub package_id: u64,
+    pub admin: Address,
+    pub evidence_hash: String,
     pub timestamp: u64,
 }
 
@@ -921,6 +932,7 @@ impl AidEscrow {
             expires_at,
             claim_starts_at,
             metadata,
+            evidence_hash: String::from_str(&env, ""),
         };
 
         env.storage().persistent().set(&key, &package);
@@ -1047,6 +1059,7 @@ impl AidEscrow {
                 expires_at,
                 claim_starts_at,
                 metadata: metadata.clone(),
+                evidence_hash: String::from_str(&env, ""),
             };
 
             env.storage().persistent().set(&key, &package);
@@ -1618,7 +1631,61 @@ impl AidEscrow {
         Ok(())
     }
 
-    /// Admin-only package expiration extension.
+    /// Admin-only function to attach an evidence hash to a package.
+    /// The evidence hash is a 64-character hex string (32 bytes) that anchors
+    /// off-chain verification evidence to the on-chain package.
+    /// Cannot overwrite an existing evidence hash.
+    ///
+    /// # Arguments
+    /// * `admin` - Admin address (must be authenticated)
+    /// * `package_id` - Package ID to attach evidence to
+    /// * `evidence_hash` - 64-character hex string representing the evidence hash
+    ///
+    /// # Errors
+    /// - `Error::NotAuthorized` - Caller is not the admin
+    /// - `Error::PackageNotFound` - Package doesn't exist
+    /// - `Error::InvalidState` - Package already has an evidence hash, or hash format is invalid
+    pub fn attach_evidence_hash(
+        env: Env,
+        admin: Address,
+        package_id: u64,
+        evidence_hash: String,
+    ) -> Result<(), Error> {
+        admin.require_auth();
+
+        let config_admin = Self::get_admin(env.clone())?;
+        if admin != config_admin {
+            return Err(Error::NotAuthorized);
+        }
+
+        let key = crate::keys::package_key(package_id);
+        let mut package: Package = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(Error::PackageNotFound)?;
+
+        if !package.evidence_hash.is_empty() {
+            return Err(Error::InvalidState);
+        }
+
+        Self::validate_evidence_hash(&env, &evidence_hash)?;
+
+        package.evidence_hash = evidence_hash.clone();
+        env.storage().persistent().set(&key, &package);
+
+        let timestamp = env.ledger().timestamp();
+        EvidenceAttached {
+            package_id,
+            admin,
+            evidence_hash,
+            timestamp,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
     /// Admin-only package expiration extension using a relative time delta.
     ///
     /// # Deprecated
@@ -2115,6 +2182,25 @@ impl AidEscrow {
         }
     }
 
+    /// Validates that the evidence hash is a 64-character hex string (32 bytes).
+    fn validate_evidence_hash(_env: &Env, hash: &String) -> Result<(), Error> {
+        let len = hash.len() as usize;
+        if len != 64 {
+            return Err(Error::InvalidState);
+        }
+
+        let mut raw = [0u8; 64];
+        hash.copy_into_slice(&mut raw);
+
+        for byte in &raw {
+            if Self::hex_nibble(*byte).is_none() {
+                return Err(Error::InvalidState);
+            }
+        }
+
+        Ok(())
+    }
+
     /// Returns the total amount currently locked for a specific token.
     pub fn get_total_locked(env: Env, token: Address) -> i128 {
         let locked_map: Map<Address, i128> = env
@@ -2172,6 +2258,16 @@ impl AidEscrow {
     pub fn view_package_status(env: Env, id: u64) -> Result<PackageStatus, Error> {
         let pkg = Self::get_package(env, id)?;
         Ok(pkg.status)
+    }
+
+    /// Returns the evidence hash attached to a package.
+    /// Returns empty string if no evidence hash has been attached.
+    ///
+    /// # Errors
+    /// Returns `Error::PackageNotFound` if no package exists with the given `id`.
+    pub fn get_evidence_hash(env: Env, id: u64) -> Result<String, Error> {
+        let pkg = Self::get_package(env, id)?;
+        Ok(pkg.evidence_hash)
     }
 
     // --- Analytics ---
