@@ -184,10 +184,7 @@ export class MockOnchainAdapter implements OnchainAdapter {
       throw new BadRequestException(`Aid package is in status ${pkg.status}`);
     }
 
-    let amountToClaimStr = params.amount;
-    if (!amountToClaimStr) {
-      amountToClaimStr = pkg.remainingAmount;
-    }
+    const amountToClaimStr = params.amount || pkg.remainingAmount;
 
     const amountToClaim = BigInt(amountToClaimStr);
     const remaining = BigInt(pkg.remainingAmount);
