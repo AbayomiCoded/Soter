@@ -19,7 +19,6 @@ import {
   GetAidPackageResult,
   GetAidPackageCountParams,
   GetAidPackageCountResult,
-  AidPackage,
   GetTokenBalanceParams,
   GetTokenBalanceResult,
   ContractMetadata,
@@ -281,10 +280,10 @@ export class MockOnchainAdapter implements OnchainAdapter {
         status: pkg.status,
         createdAt: pkg.createdAt,
         expiresAt: pkg.expiresAt,
-        metadata: pkg.metadata as any,
+        metadata: pkg.metadata,
         claimedAmount: pkg.claimedAmount,
         remainingAmount: pkg.remainingAmount,
-      } as AidPackage,
+      },
       timestamp: new Date(),
     };
   }
