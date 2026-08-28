@@ -8,6 +8,7 @@ import { MetadataService } from './metadata.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { LoggerService } from '../logger/logger.service';
 import { ONCHAIN_ADAPTER_TOKEN } from '../onchain/onchain.adapter';
+import { ProviderHealthRegistryService } from './provider-health-registry.service';
 
 describe('HealthController', () => {
   let app: INestApplication;
@@ -50,6 +51,12 @@ describe('HealthController', () => {
         { provide: PrismaService, useValue: prismaMock },
         { provide: LoggerService, useValue: loggerMock },
         { provide: ONCHAIN_ADAPTER_TOKEN, useValue: onchainAdapterMock },
+        {
+          provide: ProviderHealthRegistryService,
+          useValue: {
+            getAllStatuses: jest.fn().mockReturnValue({}),
+          },
+        },
       ],
     }).compile();
 
@@ -190,7 +197,10 @@ describe('HealthController', () => {
         service: 'soter-backend',
         environment: 'test',
         providers: expect.objectContaining({
-          onchain: expect.objectContaining({ adapter: 'mock', network: 'testnet' }),
+          onchain: expect.objectContaining({
+            adapter: 'mock',
+            network: 'testnet',
+          }),
           ai: expect.objectContaining({
             active: expect.any(String),
             models: expect.objectContaining({
