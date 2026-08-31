@@ -27,9 +27,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'pnpm'
 
       - uses: actions/setup-java@v4
         with:
@@ -38,9 +44,8 @@ jobs:
 
       - uses: android-actions/setup-android@v3
 
-      - name: Install mobile dependencies
-        working-directory: app/mobile
-        run: npm ci
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
 
       # Required for the Android emulator to use hardware acceleration on
       # GitHub-hosted Linux runners; without this the emulator falls back
