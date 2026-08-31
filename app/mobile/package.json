@@ -30,7 +30,7 @@
     "expo": "~54.0.31",
     "expo-asset": "^12.0.12",
     "expo-barcode-scanner": "~12.5.3",
-    "expo-battery": "~7.0.0",
+    "expo-battery": "~10.0.8",
     "expo-build-properties": "^57.0.15",
     "expo-camera": "^55.0.16",
     "expo-clipboard": "~8.0.7",
