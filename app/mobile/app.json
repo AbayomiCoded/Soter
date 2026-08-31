@@ -17,7 +17,9 @@
       "bundleIdentifier": "org.pulsefy.soter.mobile",
       "supportsTablet": true,
       "infoPlist": {
-        "UIBackgroundModes": ["remote-notification"]
+        "UIBackgroundModes": [
+          "remote-notification"
+        ]
       }
     },
     "android": {
