@@ -8,7 +8,7 @@ import {
   Alert,
   ActivityIndicator,
 } from 'react-native';
-import { BarCodeScanner } from 'expo-barcode-scanner';
+import { CameraView, BarcodeScanningResult } from 'expo-camera';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/types';
 import { useTheme } from '../theme/ThemeContext';
@@ -59,7 +59,7 @@ export const BulkScannerScreen: React.FC<Props> = ({ navigation }) => {
     statusMessage,
   } = useCameraPermission();
 
-  const handleBarCodeScanned = async ({ type, data }: { type: string; data: string }) => {
+  const handleBarCodeScanned = async ({ data }: BarcodeScanningResult) => {
     if (isProcessing) return;
 
     const normalizedData = data.trim();
@@ -136,8 +136,9 @@ export const BulkScannerScreen: React.FC<Props> = ({ navigation }) => {
 
   return (
     <View style={styles.container}>
-      <BarCodeScanner
-        onBarCodeScanned={isProcessing ? undefined : handleBarCodeScanned}
+      <CameraView
+        onBarcodeScanned={isProcessing ? undefined : handleBarCodeScanned}
+        barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
         style={StyleSheet.absoluteFillObject}
       />
 

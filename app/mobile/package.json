@@ -29,7 +29,6 @@
     "@walletconnect/sign-client": "^2.23.8",
     "expo": "~54.0.37",
     "expo-asset": "^12.0.12",
-    "expo-barcode-scanner": "~12.5.3",
     "expo-battery": "~10.0.8",
     "expo-build-properties": "~1.0.10",
     "expo-camera": "~17.0.10",

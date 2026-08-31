@@ -8,7 +8,7 @@ import {
   Alert,
   ActivityIndicator,
 } from 'react-native';
-import { BarCodeScanner } from 'expo-barcode-scanner';
+import { CameraView, BarcodeScanningResult } from 'expo-camera';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/types';
 import { useTheme } from '../theme/ThemeContext';
@@ -65,7 +65,7 @@ export const ScannerScreen: React.FC<Props> = ({ navigation }) => {
     statusMessage,
   } = useCameraPermission();
 
-  const handleBarCodeScanned = ({ type, data }: { type: string; data: string }) => {
+  const handleBarCodeScanned = ({ data }: BarcodeScanningResult) => {
     if (isDuplicateScan(data.trim())) return;
 
     setScanned(true);
@@ -119,8 +119,9 @@ export const ScannerScreen: React.FC<Props> = ({ navigation }) => {
   // ── Scanner active ───────────────────────────────────────────────────────
   return (
     <View style={styles.container}>
-      <BarCodeScanner
-        onBarCodeScanned={scanned ? undefined : handleBarCodeScanned}
+      <CameraView
+        onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
+        barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
         style={StyleSheet.absoluteFillObject}
         // The camera view itself is not interactive for screen readers;
         // the overlay controls below provide all necessary actions.
