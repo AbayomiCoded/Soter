@@ -86,6 +86,14 @@ export class MetricsService {
     @InjectMetric('claim_funnel_duration_seconds')
     public claimFunnelDuration: Histogram<string>,
 
+    // Entity Link Review Queue Metrics (issue #949)
+    @InjectMetric('entity_link_review_queue_depth')
+    public entityLinkReviewQueueDepthGauge: Gauge<string>,
+    @InjectMetric('entity_link_review_decisions_total')
+    public entityLinkReviewDecisionsCounter: Counter<string>,
+    @InjectMetric('entity_link_review_duration_seconds')
+    public entityLinkReviewDuration: Histogram<string>,
+
     // API Key Rate Limit Metrics (issue #952)
     @InjectMetric('api_key_rate_limit_rejections_total')
     public apiKeyRateLimitRejectionsCounter: Counter<string>,
@@ -432,6 +440,45 @@ export class MetricsService {
   /** Set the current number of notification outbox records awaiting replay. */
   setNotificationDeadLetterDepth(count: number): void {
     this.setGauge('notification_dead_letter_depth', count);
+  }
+
+  /**
+   * Adjust the gauge tracking how many entity links are currently sitting
+   * in the review queue for a given entity type. Increments (+1) when a
+   * link is queued, decrements (-1) when a reviewer decides it.
+   */
+  adjustEntityLinkReviewQueueDepth(entityType: string, delta: 1 | -1): void {
+    this.entityLinkReviewQueueDepthGauge.inc(
+      { entity_type: entityType },
+      delta,
+    );
+  }
+
+  /**
+   * Set the absolute entity-link review queue depth for an entity type.
+   * Used for periodic refresh to correct drift from incremental updates.
+   */
+  setEntityLinkReviewQueueDepth(entityType: string, count: number): void {
+    this.entityLinkReviewQueueDepthGauge.set(
+      { entity_type: entityType },
+      count,
+    );
+  }
+
+  /** Record a reviewer decision on a queued entity link ('accept'|'reject'|'remap'). */
+  incrementEntityLinkReviewDecision(decision: string): void {
+    this.entityLinkReviewDecisionsCounter.inc({ decision });
+  }
+
+  /**
+   * Record how long a link sat in the review queue before a reviewer
+   * decided it (seconds between `queuedAt` and the decision).
+   */
+  recordEntityLinkReviewDuration(
+    decision: string,
+    durationSeconds: number,
+  ): void {
+    this.entityLinkReviewDuration.observe({ decision }, durationSeconds);
   }
 
   /**

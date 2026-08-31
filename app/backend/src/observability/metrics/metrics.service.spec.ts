@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getToken } from '@willsoto/nestjs-prometheus';
-import { Counter, Gauge } from 'prom-client';
+import { Counter, Gauge, Histogram } from 'prom-client';
 import { MetricsService } from './metrics.service';
 
 // All metric names injected via @InjectMetric in MetricsService's constructor.
@@ -41,6 +41,9 @@ const ALL_METRIC_NAMES = [
   'claims_cancelled_total',
   'claims_in_funnel',
   'claim_funnel_duration_seconds',
+  'entity_link_review_queue_depth',
+  'entity_link_review_decisions_total',
+  'entity_link_review_duration_seconds',
   'api_key_rate_limit_rejections_total',
 ];
 
@@ -160,5 +163,97 @@ describe('MetricsService - cache metrics (issue #702)', () => {
     await expect(service.getCacheHitsTotal()).resolves.toBe(0);
     await expect(service.getCacheMissesTotal()).resolves.toBe(0);
     await expect(service.getCacheInvalidationsTotal()).resolves.toBe(0);
+  });
+});
+
+describe('MetricsService - entity link review queue metrics (issue #949)', () => {
+  let service: MetricsService;
+  let queueDepthGauge: Gauge<string>;
+  let decisionsCounter: Counter<string>;
+  let reviewDuration: Histogram<string>;
+
+  beforeEach(async () => {
+    queueDepthGauge = new Gauge({
+      name: 'entity_link_review_queue_depth',
+      help: 'test',
+      labelNames: ['entity_type'],
+      registers: [],
+    });
+    decisionsCounter = new Counter({
+      name: 'entity_link_review_decisions_total',
+      help: 'test',
+      labelNames: ['decision'],
+      registers: [],
+    });
+    reviewDuration = new Histogram({
+      name: 'entity_link_review_duration_seconds',
+      help: 'test',
+      labelNames: ['decision'],
+      registers: [],
+    });
+
+    const providers = ALL_METRIC_NAMES.map(name => {
+      if (name === 'entity_link_review_queue_depth') {
+        return { provide: getToken(name), useValue: queueDepthGauge };
+      }
+      if (name === 'entity_link_review_decisions_total') {
+        return { provide: getToken(name), useValue: decisionsCounter };
+      }
+      if (name === 'entity_link_review_duration_seconds') {
+        return { provide: getToken(name), useValue: reviewDuration };
+      }
+      return { provide: getToken(name), useValue: stubMetric() };
+    });
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [MetricsService, ...providers],
+    }).compile();
+
+    service = module.get<MetricsService>(MetricsService);
+  });
+
+  it('adjusts queue depth up and down per entity type', async () => {
+    service.adjustEntityLinkReviewQueueDepth('organization', 1);
+    service.adjustEntityLinkReviewQueueDepth('organization', 1);
+    service.adjustEntityLinkReviewQueueDepth('organization', -1);
+
+    const data = await queueDepthGauge.get();
+    const value = data.values.find(
+      v => v.labels.entity_type === 'organization',
+    )?.value;
+    expect(value).toBe(1);
+  });
+
+  it('sets an absolute queue depth for periodic refresh', async () => {
+    service.setEntityLinkReviewQueueDepth('location', 7);
+
+    const data = await queueDepthGauge.get();
+    expect(
+      data.values.find(v => v.labels.entity_type === 'location')?.value,
+    ).toBe(7);
+  });
+
+  it('counts review decisions by type', async () => {
+    service.incrementEntityLinkReviewDecision('accept');
+    service.incrementEntityLinkReviewDecision('accept');
+    service.incrementEntityLinkReviewDecision('reject');
+
+    const data = await decisionsCounter.get();
+    expect(data.values.find(v => v.labels.decision === 'accept')?.value).toBe(
+      2,
+    );
+    expect(data.values.find(v => v.labels.decision === 'reject')?.value).toBe(
+      1,
+    );
+  });
+
+  it('records decision latency observations by decision type', async () => {
+    service.recordEntityLinkReviewDuration('accept', 120);
+
+    const data = await reviewDuration.get();
+    const sumEntry = data.values.find(
+      v => v.metricName?.endsWith('_sum') && v.labels.decision === 'accept',
+    );
+    expect(sumEntry?.value).toBe(120);
   });
 });

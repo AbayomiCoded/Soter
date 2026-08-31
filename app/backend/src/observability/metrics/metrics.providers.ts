@@ -213,6 +213,24 @@ export const metricsProviders = [
     buckets: [1, 5, 10, 30, 60, 120, 300, 600, 1800, 3600, 86400],
   }),
 
+  // Entity Link Review Queue Metrics (issue #949)
+  makeGaugeProvider({
+    name: 'entity_link_review_queue_depth',
+    help: 'Current number of entity links awaiting review, by entity type',
+    labelNames: ['entity_type'],
+  }),
+  makeCounterProvider({
+    name: 'entity_link_review_decisions_total',
+    help: 'Total number of entity link review decisions made, by decision type',
+    labelNames: ['decision'],
+  }),
+  makeHistogramProvider({
+    name: 'entity_link_review_duration_seconds',
+    help: 'Time a link spent in the review queue before a reviewer decided it',
+    labelNames: ['decision'],
+    buckets: [60, 300, 900, 3600, 14400, 86400, 259200, 604800],
+  }),
+
   // API Key Rate Limit Metrics (issue #952)
   makeCounterProvider({
     name: 'api_key_rate_limit_rejections_total',
