@@ -80,6 +80,22 @@ class Settings(BaseSettings):
     test_provider_mode: bool = False
     llm_timeout_seconds: int = 30
 
+    # Per-model USD cost per 1,000 tokens (issue #981), keyed by the exact
+    # model string passed to the provider (e.g. OPENAI_MODEL/GROQ_MODEL).
+    # Used to derive an estimated cost metric from captured token counts;
+    # a model missing from this table simply has no cost estimated for it
+    # (not a fabricated 0) — see metrics.estimate_llm_cost_usd. Defaults are
+    # illustrative list-price approximations as of this writing, not a
+    # billing guarantee; operators should override via
+    # LLM_MODEL_COST_PER_1K_TOKENS (a JSON object) to match their actual
+    # negotiated/current provider pricing.
+    llm_model_cost_per_1k_tokens: Dict[str, Dict[str, float]] = Field(
+        default_factory=lambda: {
+            "gpt-4o-mini": {"prompt": 0.00015, "completion": 0.0006},
+            "llama-3.3-70b-versatile": {"prompt": 0.00059, "completion": 0.00079},
+        }
+    )
+
     # Request safety limits
     max_request_body_bytes: int = 10 * 1024 * 1024
     max_request_timeout_seconds: float = 60.0
@@ -335,6 +351,21 @@ class Settings(BaseSettings):
                 validate_fallback_order(key, order)
             except ValueError as exc:
                 _add(key, str(exc))
+
+        # --- Per-model LLM cost rates --------------------------------------
+        for model_name, rates in self.llm_model_cost_per_1k_tokens.items():
+            for direction in ("prompt", "completion"):
+                rate = rates.get(direction)
+                if rate is None:
+                    _add(
+                        "LLM_MODEL_COST_PER_1K_TOKENS",
+                        f"model '{model_name}' is missing a '{direction}' rate",
+                    )
+                elif rate < 0:
+                    _add(
+                        "LLM_MODEL_COST_PER_1K_TOKENS",
+                        f"model '{model_name}' has a negative '{direction}' rate",
+                    )
 
         # --- Production requirements (defense in depth) ------------------
         # apply_environment_defaults already rejects this at construction

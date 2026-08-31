@@ -39,6 +39,16 @@ it must be bounded before it reaches `.labels()`:
   small fixed provider/model registry defined in code (not user input).
   These are safe because the *set of possible values* is fixed by the
   code, not by runtime input.
+- **`model` (e.g. on the `llm_*` metrics)** is a deliberate, narrower
+  exception: it comes from `OPENAI_MODEL`/`GROQ_MODEL` operator config,
+  never from a request, so it takes one fixed value per deploy — bounded
+  in practice even though it isn't an enum in code. Never let a `model`
+  value reach a label from anywhere other than that config (in
+  particular, never from a client-supplied override).
+- **Never label by campaign/claim/user id**, even though "attribute
+  spend to a campaign" is a real need — that identifier space is
+  unbounded. Do that attribution via logs or an audit record correlated
+  on provider+model+timestamp, not a metric label.
 
 `tests/test_metrics_cardinality.py` enforces this: it asserts that
 `REQUEST_COUNT`/`REQUEST_LATENCY`/`REQUESTS_SHED_TOTAL`/
@@ -55,6 +65,8 @@ from typing import Any, List, Optional, Tuple
 
 import psutil
 from prometheus_client import Counter, Histogram, Gauge
+
+from config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -299,3 +311,83 @@ SINGLE_FLIGHT_FAILED = Counter(
     "Total number of single-flight computations that failed",
     ["prefix"],
 )
+
+# --- LLM token usage & cost metrics (issue #981) ---
+#
+# Labels on all three metrics below are bounded: `provider` is one of the
+# handful of names in providers.KNOWN_LLM_PROVIDERS; `model` is an
+# operator-configured deploy-time value (OPENAI_MODEL/GROQ_MODEL env vars),
+# never taken from request input; `endpoint` is a fixed literal supplied by
+# the calling code (e.g. "humanitarian_verification"), not a raw request
+# path. Do NOT add a campaign/claim/user-id label here — that would be
+# unbounded (see the module docstring above); attribute spend to a
+# campaign via logs/audit records instead, correlated on provider+model+
+# timestamp if needed.
+LLM_TOKENS_TOTAL = Counter(
+    "llm_tokens_total",
+    "Total LLM tokens consumed, by provider, model, endpoint, and token type",
+    ["provider", "model", "endpoint", "token_type"],
+)
+LLM_COST_USD_TOTAL = Counter(
+    "llm_cost_usd_total",
+    "Estimated USD cost of LLM usage, derived from configured per-model rates",
+    ["provider", "model", "endpoint"],
+)
+LLM_USAGE_UNAVAILABLE_TOTAL = Counter(
+    "llm_usage_unavailable_total",
+    "LLM requests where the provider did not report token usage (not counted as zero)",
+    ["provider", "model", "endpoint"],
+)
+
+
+def estimate_llm_cost_usd(
+    model: str, prompt_tokens: int, completion_tokens: int
+) -> Optional[float]:
+    """Estimates USD cost for one LLM call from configured per-model rates.
+
+    Returns None (not 0.0) when `model` has no configured rate, so an
+    unrated model is never silently reported as free.
+    """
+    rates = settings.llm_model_cost_per_1k_tokens.get(model)
+    if rates is None:
+        return None
+    prompt_rate = rates.get("prompt")
+    completion_rate = rates.get("completion")
+    if prompt_rate is None or completion_rate is None:
+        return None
+    return (prompt_tokens / 1000.0) * prompt_rate + (
+        completion_tokens / 1000.0
+    ) * completion_rate
+
+
+def record_llm_usage(
+    provider: str,
+    model: str,
+    endpoint: str,
+    prompt_tokens: Optional[int],
+    completion_tokens: Optional[int],
+) -> None:
+    """Records token usage and estimated cost for one successful LLM call.
+
+    If either token count is unavailable (the provider didn't report
+    usage), records that as `LLM_USAGE_UNAVAILABLE_TOTAL` instead of
+    treating the missing value as zero tokens/zero cost.
+    """
+    if prompt_tokens is None or completion_tokens is None:
+        LLM_USAGE_UNAVAILABLE_TOTAL.labels(
+            provider=provider, model=model, endpoint=endpoint
+        ).inc()
+        return
+
+    LLM_TOKENS_TOTAL.labels(
+        provider=provider, model=model, endpoint=endpoint, token_type="prompt"
+    ).inc(prompt_tokens)
+    LLM_TOKENS_TOTAL.labels(
+        provider=provider, model=model, endpoint=endpoint, token_type="completion"
+    ).inc(completion_tokens)
+
+    cost_usd = estimate_llm_cost_usd(model, prompt_tokens, completion_tokens)
+    if cost_usd is not None:
+        LLM_COST_USD_TOTAL.labels(
+            provider=provider, model=model, endpoint=endpoint
+        ).inc(cost_usd)

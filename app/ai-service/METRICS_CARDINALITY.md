@@ -63,6 +63,20 @@ for the tests that enforce it.
 | `cache_single_flight_suppressed_total` / `_completed_total` / `_failed_total` | Counter | `prefix` | Fixed enum, developer-defined | `prefix` is the `@cached_response(prefix=...)` decorator argument — a small, code-controlled set of cache namespaces, never user input. |
 | `circuit_breaker_state` (defined in `services/circuit_breaker.py`, not `metrics.py`) | Gauge | `provider` | Fixed enum (~4): the hardcoded `ProviderRegistry` in `services/providers.py` (`OpenAIProvider`, `GroqProvider`, `FixtureProvider`, `TesseractOCRProvider`) | Not user input; the provider registry is configured in code. |
 | | | `state` | Fixed enum (3): `CLOSED`, `OPEN`, `HALF_OPEN` | |
+| `llm_tokens_total` (`LLM_TOKENS_TOTAL`, issue #981) | Counter | `provider` | Fixed enum (~4), same registry as `circuit_breaker_state` | |
+| | | `model` | **Deploy-time config, not user input** — `OPENAI_MODEL`/`GROQ_MODEL` (`config.py`). One value per deploy; never taken from a request. Same category as the `model_load_time_seconds` watch item above, but here it's config-sourced rather than a hardcoded literal, so treat it as bounded-in-practice, not bounded-by-code. | |
+| | | `endpoint` | Fixed literal | Currently only `"humanitarian_verification"` (`services/humanitarian_verification.py`) — the one call site that reports LLM usage. Not `bounded_endpoint_label`'s raw-path output; a hardcoded string chosen by the calling code. |
+| | | `token_type` | Fixed enum (2): `prompt`, `completion` | |
+| `llm_cost_usd_total` (`LLM_COST_USD_TOTAL`) | Counter | `provider`, `model`, `endpoint` | Same as above | Value is a derived USD estimate (`metrics.estimate_llm_cost_usd`) from `settings.llm_model_cost_per_1k_tokens`, not a label. |
+| `llm_usage_unavailable_total` (`LLM_USAGE_UNAVAILABLE_TOTAL`) | Counter | `provider`, `model`, `endpoint` | Same as above | Incremented instead of `llm_tokens_total`/`llm_cost_usd_total` when the provider didn't report `prompt_tokens`/`completion_tokens` (deterministic/fixture mode, or a response missing the `usage` block) — see `metrics.record_llm_usage`. Exists so a missing reading is never silently reported as a zero-token, zero-cost request. |
+
+**Deliberately not a label anywhere above**: campaign, claim, or user id.
+The issue that motivated these three metrics explicitly wants spend
+attributable to "an endpoint, a provider, or a campaign" — the first two
+are the bounded labels above; campaign attribution must go through logs
+or an audit record correlated on provider+model+timestamp, since a
+campaign/claim id is unbounded and would defeat the whole point of this
+document.
 
 ## Response size
 
