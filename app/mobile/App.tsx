@@ -30,6 +30,7 @@ import {
 } from './src/contexts/CrashReportingContext';
 import { ReleaseNotesModal } from './src/components/ReleaseNotesModal';
 import { ForceUpgradeScreen } from './src/screens/ForceUpgradeScreen';
+import { markColdStartPhase } from './src/startup/coldStartTracker';
 
 // ---------------------------------------------------------------------------
 // Deep-link configuration for React Navigation
@@ -101,7 +102,10 @@ const AppInner = () => {
               linking={linking}
               theme={navTheme}
               ref={navigationRef}
-              onReady={() => setIsNavReady(true)}
+              onReady={() => {
+                markColdStartPhase('navigationReady');
+                setIsNavReady(true);
+              }}
             >
               <AppNavigator />
               <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
@@ -156,6 +160,7 @@ const CrashReportingGate: React.FC = () => {
 };
 
 export default function App() {
+  markColdStartPhase('appRenderStart');
   return (
     <CrashReportingProvider>
       <CrashReportingGate />
